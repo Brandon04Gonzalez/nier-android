@@ -5,8 +5,9 @@
 ## Estado en una línea
 
 En PC arranca, pasa la pantalla de sistema YoRHa, el título, Nueva partida (ranura, nombre, dificultad) y **juega el
-prólogo en 3D** (unidades de vuelo sobre las nubes, 2B/12H, rayos) con la imagen correcta. Rendimiento en PC todavía
-bajo en el prólogo (~10 fps en una RTX 4060: ~80 MB de vértices subidos por frame y 20 ms de write-backs). Android:
+prólogo en 3D** (unidades de vuelo sobre las nubes, 2B/12H, rayos, el tutorial de disparo) con la imagen correcta.
+Rendimiento en PC en el vuelo: 9,8 fps a 1080p → **19 fps a 720p con el recorte de vértices** (las subidas bajaron de
+~70 a 10 MB por frame). Android:
 lanzador con las opciones de P5R v0.5.0 + mods; APK arm64 (`private/nier/apk_arm64/nier.apk`) y x86_64. **En el
 emulador Android (x86_64) funciona**: lanzador ("Data ready"), arranque YoRHa con los controles táctiles, título y
 pantalla de Nueva partida (~9,5 fps en el emulador). Falta probarlo en un teléfono/tablet ARM real.
@@ -129,6 +130,13 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
 | `NX_DEFER_WRITE_BACKS=0` | 11,1 | +13 % con una sola muestra (14 write-backs/frame, 1 % cambiado): repetir antes de cambiar el valor por defecto |
 | Emulador Android x86_64 (menú, 720p) | ~9,5 | replay 60 ms (CPU del emulador); no representa un móvil ARM |
 | 720p, A/B repetido: `NX_DEFER_WRITE_BACKS=0` / por defecto | 16,9 / 16,8 | sin diferencia: se queda como está |
+| **720p + recorte de vértices arreglado (ahora por defecto)** | **19,0** (vs 16,8) | **subidas 69 → 10 MB/frame**; imagen igual a la de referencia (`runs/cmp_trim.png`) |
+
+**Causa de las subidas** (`NX_UPLOAD_STATS=1` ahora lista las direcciones que más bytes de vértices copian): el búfer de
+vértices de efectos se enlaza desde la misma base con un tamaño que crece draw a draw, y cada draw lo copiaba entero
+otra vez (~20 veces por frame: 62 % de los bytes). El recorte (`NX_VERTEX_TRIM`) no funcionaba con draws indexados
+porque `draw_inputs_shared` pide los flujos con `indexed=false`: ahora el tipo sale del comando. `NX_VERTEX_TRIM=0` lo
+apaga. Los write-backs pasan a 17/frame con 7 % de palabras cambiadas (antes 6 y 0 %): vigilar.
 
 `NX_LOG_BIG_VERTEX=<bytes>` (nuevo, `runs/bigv`): los flujos grandes son vértices de efectos que la CPU reescribe cada
 frame (mismo búfer `0x1145254a0`, 1,2–3,3 MB, stride 28, tamaño creciente) en draws cuyo número de vértices el runtime
