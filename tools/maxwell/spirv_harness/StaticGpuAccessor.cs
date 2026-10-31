@@ -183,6 +183,9 @@ namespace SpirvHarness
         public bool QueryHostSupportsTextureShadowLod() => false;
         public bool QueryHostSupportsFragmentShaderInterlock() => true;
         public bool QueryHostSupportsShaderNonUniformIndexing() => true;
-        public int QueryHostSubgroupSize() => 32;
+        // 128: the translator then maps each 32-thread warp onto its slice of the host subgroup (lane & 31, shuffle
+        // index (lane & 0x60) | src, ballot word lane >> 5), which is right for subgroups of 32, 64 and 128 alike.
+        // With 32 the shuffles and ballots assume 32-wide subgroups and read the wrong lanes on Adreno (64/128).
+        public int QueryHostSubgroupSize() => 128;
     }
 }

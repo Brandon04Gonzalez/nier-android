@@ -61,7 +61,8 @@ $P -m recomp private/nier/exefs/sdk  private/nier/gen/sdk  --name sdk  --base 0x
 # 3. shaders
 $P games/p5r/tools/cpk.py private/nier/extract/romfs/data000.cpk --extract private/nier/extract/cpk --grep shader
 $P games/nier/tools/nier_shaders.py private/nier/extract/cpk private/nier/shaders_extracted/nier
-dotnet private/build/spirv_harness/bin/Release/net10.0/spirv_harness.dll --batch private/nier/shaders_extracted --out private/nier/spirv --jobs 8 --no-val
+# traductor propio de NieR (subgrupos de 128): dotnet build -c Release -p:NxBuildDir=spirv_harness_nier en tools/maxwell/spirv_harness
+dotnet private/build/spirv_harness_nier/bin/Release/net10.0/spirv_harness.dll --batch private/nier/shaders_extracted --out private/nier/spirv --jobs 8 --no-val
 ```
 
 ```powershell
@@ -148,6 +149,17 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     En juego (después de cargar): ~15 fps, ~10 con los rayos; replay 19–30 ms + espera de GPU 23–30 ms, y ~33 ms por
     frame esperando write-backs (6–16 por frame, 2,4–3 MB, 0–4 % cambiado). Con los rayos sube el replay (más draws)
     y los write-backs.
+
+17. **Mar morado en la tablet** (en PC sale gris azulado; tinte morado en toda la escena). Descartado
+    `R11G11B10F` (con `NX_R11G11B10_EMULATE=1` sigue morado) y los avisos `could not untile` (salen igual en PC).
+    Causa probable: el traductor generaba los shaders para subgrupos de 32 (`QueryHostSubgroupSize() => 32`), y la
+    Adreno trabaja con 64/128 y en Vulkan 1.1 no se le puede imponer 32 (`subgroup sizes 0..0`). 12 shaders usan
+    shuffle/ballot (6 compute, 4 geometry, 2 fragment) y 2 más leen el número de hilo; se ejecutan en la tablet
+    `a686f64415f6841a` (compute 40x23 de 16x16), `b5a08228ec8650a8` y `d062cfa45091fd7e` (reducciones de 1.024
+    hilos), `6d6a27c9728fe79b` y `d9db47fa2f852c79`. Ahora el traductor usa 128 (cada warp de 32 va en su trozo del
+    subgrupo: válido con 32, 64 y 128). Solo cambian esos 14 SPIR-V (los originales en `spirv_sg32_backup`); el
+    traductor de NieR se compila aparte (`-p:NxBuildDir=spirv_harness_nier`) para no tocar el de P5R, que es común.
+    **Pendiente de confirmar en la tablet.**
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
