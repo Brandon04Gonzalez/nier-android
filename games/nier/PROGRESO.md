@@ -134,6 +134,11 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
 | 720p, A/B repetido: `NX_DEFER_WRITE_BACKS=0` / por defecto | 16,9 / 16,8 | sin diferencia: se queda como está |
 | **720p + recorte de vértices arreglado (ahora por defecto)** | **19,0** (vs 16,8) | **subidas 69 → 10 MB/frame**; imagen igual a la de referencia (`runs/cmp_trim.png`) |
 
+**Estabilidad** (`runs/long1`, 10 min a 720p con el recorte, A cada 3 s y R a ratos): carga la partida guardada, vuela,
+dispara sobre el mar, llega a un fin de partida ("Los YoRHa fueron exterminados…", final W, por pulsar al azar), vuelve
+al título y la partida guardada muestra "Final: W" y 3:20 de juego. Sin errores; 23 fps al final. Las partidas se
+guardan en `private/nier/user/save` (bórralas para volver a probar Nueva partida desde cero).
+
 **Causa de las subidas** (`NX_UPLOAD_STATS=1` ahora lista las direcciones que más bytes de vértices copian): el búfer de
 vértices de efectos se enlaza desde la misma base con un tamaño que crece draw a draw, y cada draw lo copiaba entero
 otra vez (~20 veces por frame: 62 % de los bytes). El recorte (`NX_VERTEX_TRIM`) no funcionaba con draws indexados
