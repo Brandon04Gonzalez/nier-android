@@ -186,6 +186,7 @@ const char* source_name(NvnSource s) {
     case NvnSource::SamplerBinding: return "sampler binding";
     case NvnSource::ImageBinding: return "image binding";
     case NvnSource::HandleInUniform: return "handle in uniform block";
+    case NvnSource::PackedHandle: return "packed handle (separate texture/sampler)";
     default: return "unknown";
     }
 }

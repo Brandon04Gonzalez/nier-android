@@ -72,6 +72,33 @@ void BindTextures(CPU& c) {
     }
 }
 
+// BindSeparateTexture(s) / BindSeparateSampler(s) (NieR): Cmd::BindTexture with mask 1 / 2 (nvn_draw_state.cpp).
+template <uint32_t Kind>
+void BindSeparate(CPU& c) {  // (cmd, stage, index, handle)
+    static std::atomic<int> logged{0};
+    static const bool log_on = std::getenv("NX_LOG_SEPARATE") != nullptr;
+    if (log_on && logged++ < 400)
+        log("nvn: BindSeparate%s stage %d index %d handle %llx", Kind == 1 ? "Texture" : "Sampler", int(c.x[1]),
+            int(c.x[2]), (unsigned long long)c.x[3]);
+    Cmd cmd{Cmd::BindTexture};
+    cmd.mask = Kind;
+    cmd.i[0] = int32_t(c.x[1]), cmd.i[1] = int32_t(c.x[2]);
+    cmd.a[0] = c.x[3];
+    record(c.x[0], cmd);
+}
+
+template <uint32_t Kind>
+void BindSeparates(CPU& c) {  // (cmd, stage, first, count, const handle*)
+    int32_t stage = int32_t(c.x[1]), first = int32_t(c.x[2]), count = int32_t(c.x[3]);
+    for (int32_t k = 0; k < count && c.x[4]; k++) {
+        Cmd cmd{Cmd::BindTexture};
+        cmd.mask = Kind;
+        cmd.i[0] = stage, cmd.i[1] = first + k;
+        cmd.a[0] = ld<uint64_t>(c.x[4] + 8ull * k);
+        record(c.x[0], cmd);
+    }
+}
+
 void BindVertexBuffers(CPU& c) {
     int32_t first = int32_t(c.x[1]), count = int32_t(c.x[2]);
     for (int32_t k = 0; k < count && c.x[3]; k++) {
@@ -178,6 +205,10 @@ NX_HLE("nvnCommandBufferBindStorageBuffers", BindStorageBuffers);
 NX_HLE("nvnCommandBufferBindStorageBuffersDeferred", bind_deferred<3>);
 NX_HLE("nvnCommandBufferBindTextures", BindTextures);
 NX_HLE("nvnCommandBufferBindTexturesDeferred", bind_deferred<0>);
+NX_HLE("nvnCommandBufferBindSeparateTexture", BindSeparate<1>);
+NX_HLE("nvnCommandBufferBindSeparateSampler", BindSeparate<2>);
+NX_HLE("nvnCommandBufferBindSeparateTextures", BindSeparates<1>);
+NX_HLE("nvnCommandBufferBindSeparateSamplers", BindSeparates<2>);
 NX_HLE("nvnCommandBufferBindVertexBuffers", BindVertexBuffers);
 NX_HLE("nvnCommandBufferSetViewports", SetViewports);
 NX_HLE("nvnCommandBufferSetScissors", SetScissors);

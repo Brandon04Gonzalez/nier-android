@@ -668,6 +668,10 @@ void DescriptorPoolGetSize(CPU& c) {
 void DeviceGetTextureHandle(CPU& c) { c.x[0] = (c.x[1] & 0xFFFFF) | ((c.x[2] & 0xFFF) << 20); }
 void DeviceGetTexelFetchHandle(CPU& c) { c.x[0] = c.x[1] & 0xFFFFF; }
 void DeviceGetImageHandle(CPU& c) { c.x[0] = c.x[1] & 0xFFFFF; }
+// Separate handles (NieR): the shader ORs the texture's and the sampler's into one bindless handle (Ryujinx
+// TextureHandleType.SeparateSamplerHandle), so each carries its id where the combined handle has it.
+void DeviceGetSeparateTextureHandle(CPU& c) { c.x[0] = c.x[1] & 0xFFFFF; }
+void DeviceGetSeparateSamplerHandle(CPU& c) { c.x[0] = (c.x[1] & 0xFFF) << 20; }
 
 }  // namespace
 
@@ -720,6 +724,8 @@ NX_HLE("nvnTexturePoolGetMemoryOffset", DescriptorPoolGetMemoryOffset);
 NX_HLE("nvnSamplerPoolGetSize", DescriptorPoolGetSize);
 NX_HLE("nvnTexturePoolGetSize", DescriptorPoolGetSize);
 NX_HLE("nvnDeviceGetTextureHandle", DeviceGetTextureHandle);
+NX_HLE("nvnDeviceGetSeparateTextureHandle", DeviceGetSeparateTextureHandle);
+NX_HLE("nvnDeviceGetSeparateSamplerHandle", DeviceGetSeparateSamplerHandle);
 NX_HLE("nvnDeviceGetTexelFetchHandle", DeviceGetTexelFetchHandle);
 NX_HLE("nvnDeviceGetImageHandle", DeviceGetImageHandle);
 

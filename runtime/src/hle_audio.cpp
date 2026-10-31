@@ -25,50 +25,102 @@ namespace {
 constexpr uint64_t kBytesPerSecond = 48000 * 2 * 2;
 constexpr uint32_t kMaxInFlight = 4;  // buffers queued in the device (4 x ~21 ms)
 
-// Our AudioOutBuffer layout (only our HLE reads it): {void* data; u64 capacity; u64 size}.
+// Our AudioOutBuffer layout (only our HLE reads it): {void* data; u64 capacity; u64 size}. Each AudioOut the game
+// opens is one Out; the guest AudioOut holds kOutId + its index. With one Out its buffers go to the device as they
+// are (P5R, P4G); when a game has several open at once (NieR: Wwise and the film player), the player thread mixes
+// them into host blocks of kMixFrames.
+constexpr uint64_t kOutId = 0xA0D10;
+constexpr uint32_t kMixFrames = 1024;
+
 struct Out {
-    std::mutex lock;
-    std::condition_variable cv;
     std::deque<uint64_t> queued, released;
     std::shared_ptr<EventState> event = std::make_shared<EventState>();
-    bool started = false;
+    bool open = false, started = false;
+    uint64_t cursor = 0;  // mixing: bytes of queued.front() already mixed
     // statistics since the last log (every 1000 buffers)
     uint64_t buffers = 0, silent = 0;
     int peak = 0;
 };
-Out g_out;
+std::mutex g_out_lock;
+std::condition_variable g_out_cv;
+std::deque<Out> g_outs;  // never shrinks: guest AudioOuts keep their index
+
+Out& out_of(uint64_t audio_out) {  // under g_out_lock
+    uint64_t id = audio_out ? ld<uint64_t>(audio_out) : 0;
+    if (id >= kOutId && id - kOutId < g_outs.size()) return g_outs[id - kOutId];
+    if (g_outs.empty()) g_outs.emplace_back();
+    return g_outs.front();
+}
+
+int out_index(const Out& o) {
+    for (size_t k = 0; k < g_outs.size(); k++)
+        if (&g_outs[k] == &o) return int(k);
+    return -1;
+}
 
 // Peak and silence of one appended s16 buffer, logged every 1000 buffers (P5R's CRI mixer had no sound at first).
-void out_stats(uint64_t buf) {
+void out_stats(Out& o, uint64_t buf) {
     const int16_t* pcm = reinterpret_cast<const int16_t*>(ld<uint64_t>(buf));
     uint64_t n = ld<uint64_t>(buf + 16) / 2;
     int peak = 0;
     for (uint64_t k = 0; pcm && k < n; k++) peak = std::max(peak, std::abs(int(pcm[k])));
-    if (g_out.buffers == 0) log("audio: first AudioOut buffer, %llu bytes", (unsigned long long)(n * 2));
-    g_out.peak = std::max(g_out.peak, peak);
-    g_out.silent += peak == 0;
-    if (++g_out.buffers % 1000 == 0) {
-        log("audio: AudioOut: peak %d, %llu of 1000 buffers silent", g_out.peak, (unsigned long long)g_out.silent);
-        g_out.peak = 0, g_out.silent = 0;
+    if (o.buffers == 0) log("audio: first buffer of AudioOut %d, %llu bytes", out_index(o), (unsigned long long)(n * 2));
+    o.peak = std::max(o.peak, peak);
+    o.silent += peak == 0;
+    if (++o.buffers % 1000 == 0) {
+        log("audio: AudioOut %d: peak %d, %llu of 1000 buffers silent", out_index(o), o.peak, (unsigned long long)o.silent);
+        o.peak = 0, o.silent = 0;
     }
 }
 
-void release(void* ctx) {
-    std::lock_guard lk(g_out.lock);
-    g_out.released.push_back(reinterpret_cast<uint64_t>(ctx));
-    g_out.event->signaled = true;
+void release_locked(Out& o, uint64_t buf) {
+    o.released.push_back(buf);
+    o.event->signaled = true;
     notify_all();
-    g_out.cv.notify_all();
+    g_out_cv.notify_all();
 }
 
-// The platform device has one completion callback: AudioOut buffers are guest addresses, the renderer's blocks
-// live in g_render (below) and go back to its free list.
+// Guest buffers handed to the device as they are, and the Out each came from.
+std::vector<std::pair<uint64_t, Out*>> g_in_device;
+// Host mix blocks (all of them, and the free ones).
+std::vector<std::vector<int16_t>*> g_mix_all, g_mix_free;
+
+void release(void* ctx) {
+    std::lock_guard lk(g_out_lock);
+    const uint64_t buf = reinterpret_cast<uint64_t>(ctx);
+    for (size_t k = 0; k < g_in_device.size(); k++)
+        if (g_in_device[k].first == buf) {
+            Out* o = g_in_device[k].second;
+            g_in_device.erase(g_in_device.begin() + k);
+            release_locked(*o, buf);
+            return;
+        }
+}
+
+bool mix_owns(void* ctx) {
+    std::lock_guard lk(g_out_lock);
+    for (auto* b : g_mix_all)
+        if (b->data() == ctx) return true;
+    return false;
+}
+
+void mix_block_done(void* ctx) {
+    std::lock_guard lk(g_out_lock);
+    for (auto* b : g_mix_all)
+        if (b->data() == ctx) g_mix_free.push_back(b);
+    g_out_cv.notify_all();
+}
+
+// The platform device has one completion callback: AudioOut buffers are guest addresses, mixed blocks are ours,
+// the renderer's blocks live in g_render (below) and go back to its free list.
 void render_block_done(void* ctx);
 bool render_owns(void* ctx);
 
 void device_done(void* ctx) {
     if (render_owns(ctx))
         render_block_done(ctx);
+    else if (mix_owns(ctx))
+        mix_block_done(ctx);
     else
         release(ctx);
 }
@@ -78,6 +130,37 @@ bool device_open() {
     return ok;
 }
 
+// Bytes an Out has queued and not yet mixed. Under g_out_lock.
+uint64_t pending_bytes(const Out& o) {
+    uint64_t bytes = 0;
+    for (uint64_t b : o.queued) bytes += ld<uint64_t>(b + 16);
+    return bytes - std::min(bytes, o.cursor);
+}
+
+// One host block from every started Out (summed, saturated); a guest buffer is released once all of it is mixed.
+// An Out with nothing queued adds silence. Under g_out_lock.
+void mix_into(int16_t* dst) {
+    static std::vector<int32_t> acc(kMixFrames * 2);
+    std::fill(acc.begin(), acc.end(), 0);
+    for (Out& o : g_outs) {
+        if (!o.started) continue;
+        uint64_t done = 0;
+        while (done < kMixFrames * 2 && !o.queued.empty()) {
+            uint64_t buf = o.queued.front();
+            const int16_t* pcm = reinterpret_cast<const int16_t*>(ld<uint64_t>(buf));
+            uint64_t samples = ld<uint64_t>(buf + 16) / 2, at = o.cursor / 2;
+            uint64_t n = std::min<uint64_t>(samples - std::min(at, samples), kMixFrames * 2 - done);
+            for (uint64_t k = 0; pcm && k < n; k++) acc[done + k] += pcm[at + k];
+            done += n, o.cursor += n * 2;
+            if (o.cursor >= samples * 2) {
+                o.queued.pop_front(), o.cursor = 0;
+                release_locked(o, buf);
+            }
+        }
+    }
+    for (uint32_t k = 0; k < kMixFrames * 2; k++) dst[k] = int16_t(std::clamp(acc[k], -32768, 32767));
+}
+
 void player() {
     bool device = device_open();
     log("audio: %s", device ? "device output (48 kHz stereo s16)" : "no audio device, timer pacing");
@@ -85,24 +168,49 @@ void player() {
     auto next = clock::now();
     for (;;) {
         uint64_t buf = 0, size = 0;
+        std::vector<int16_t>* block = nullptr;
         {
-            std::unique_lock lk(g_out.lock);
+            std::unique_lock lk(g_out_lock);
+            int open = 0;
+            Out* only = nullptr;
+            for (Out& o : g_outs)
+                if (o.open) open++, only = &o;
+            const bool mixing = open > 1;
             auto ready = [&] {
-                return g_out.started && !g_out.queued.empty() && (!device || plat::audio_queued() < kMaxInFlight);
+                if (device && plat::audio_queued() >= kMaxInFlight) return false;
+                if (!mixing) return only && only->started && !only->queued.empty();
+                if (g_mix_free.empty()) return false;
+                // every started Out has a block's worth queued, or the device is about to run dry
+                bool any = false, all = true;
+                for (Out& o : g_outs) {
+                    if (!o.started) continue;
+                    uint64_t bytes = pending_bytes(o);
+                    any |= bytes > 0, all &= bytes >= kMixFrames * 4;
+                }
+                return any && (all || !device || plat::audio_queued() < 2);
             };
-            g_out.cv.wait_for(lk, std::chrono::milliseconds(5), ready);
+            g_out_cv.wait_for(lk, std::chrono::milliseconds(5), ready);
             if (!ready()) continue;
-            buf = g_out.queued.front();
-            g_out.queued.pop_front();
-            size = ld<uint64_t>(buf + 16);
+            if (!mixing) {
+                buf = only->queued.front();
+                only->queued.pop_front();
+                size = ld<uint64_t>(buf + 16);
+                g_in_device.push_back({buf, only});
+            } else {
+                block = g_mix_free.back();
+                g_mix_free.pop_back();
+                mix_into(block->data());
+                size = kMixFrames * 4;
+            }
         }
-        if (device && plat::audio_submit(reinterpret_cast<const void*>(ld<uint64_t>(buf)), size,
-                                         reinterpret_cast<void*>(buf)))
-            continue;
+        const void* data = block ? static_cast<const void*>(block->data()) : reinterpret_cast<const void*>(ld<uint64_t>(buf));
+        void* ctx = block ? static_cast<void*>(block->data()) : reinterpret_cast<void*>(buf);
+        if (device && plat::audio_submit(data, size, ctx)) continue;
         next = std::max(next, clock::now() - std::chrono::milliseconds(50));
         next += std::chrono::microseconds(size * 1000000 / kBytesPerSecond);
         std::this_thread::sleep_until(next);
-        release(reinterpret_cast<void*>(buf));
+        if (block) mix_block_done(ctx);
+        else release(ctx);
     }
 }
 
@@ -112,44 +220,67 @@ void InitializeAudioOutParameter(CPU& c) {  // {u32 sample_rate; u16 channels; u
     st<uint16_t>(c.x[0] + 6, 0);
 }
 
-void OpenDefaultAudioOut(CPU& c) {  // (AudioOut*, os::SystemEvent*, const AudioOutParameter&)
-    uint64_t out = c.x[0], sysev = c.x[1];
-    // Give the guest a system event backed by our kernel event: nn::os::AttachSystemEvent(type, read, managed,
-    // write, managed, clear mode = manual).
-    auto w = std::make_shared<KEvent>();
-    auto r = std::make_shared<KEvent>();
-    w->state = r->state = g_out.event;
-    uint32_t hr = handle_add(r), hw = handle_add(w);
-    uint64_t attach = find_symbol("_ZN2nn2os17AttachSystemEventEPNS0_15SystemEventTypeEjbjbNS0_14EventClearModeE");
-    uint64_t saved[8];
-    for (int k = 0; k < 8; k++) saved[k] = c.x[k];
-    c.x[0] = sysev;
-    c.x[1] = hr;
-    c.x[2] = 1;
-    c.x[3] = hw;
-    c.x[4] = 1;
-    c.x[5] = 1;  // manual clear
-    call(c, attach);
-    for (int k = 0; k < 8; k++) c.x[k] = saved[k];
-    st<uint64_t>(out, 0xA0D10);  // opaque
+// A new Out for the guest AudioOut `out`, and its system event when the game passes one: nn::os::AttachSystemEvent
+// (type, read, managed, write, managed, clear mode = manual) backed by our kernel event.
+void open_out(CPU& c, uint64_t out, uint64_t sysev) {
+    std::shared_ptr<EventState> state;
+    size_t index;
+    {
+        std::lock_guard lk(g_out_lock);
+        index = g_outs.size();
+        g_outs.emplace_back();
+        g_outs.back().open = true;
+        state = g_outs.back().event;
+        if (g_mix_all.empty())
+            for (uint32_t k = 0; k < kMaxInFlight + 2; k++) {
+                g_mix_all.push_back(new std::vector<int16_t>(kMixFrames * 2));
+                g_mix_free.push_back(g_mix_all.back());
+            }
+    }
+    if (sysev) {
+        auto w = std::make_shared<KEvent>();
+        auto r = std::make_shared<KEvent>();
+        w->state = r->state = state;
+        uint32_t hr = handle_add(r), hw = handle_add(w);
+        uint64_t attach = find_symbol("_ZN2nn2os17AttachSystemEventEPNS0_15SystemEventTypeEjbjbNS0_14EventClearModeE");
+        uint64_t saved[8];
+        for (int k = 0; k < 8; k++) saved[k] = c.x[k];
+        c.x[0] = sysev;
+        c.x[1] = hr;
+        c.x[2] = 1;
+        c.x[3] = hw;
+        c.x[4] = 1;
+        c.x[5] = 1;  // manual clear
+        call(c, attach);
+        for (int k = 0; k < 8; k++) c.x[k] = saved[k];
+    }
+    st<uint64_t>(out, kOutId + index);
+    if (index > 0) log("audio: AudioOut %zu opened (mixed with the others)", index);
     static std::once_flag once;
     std::call_once(once, [] { std::thread(player).detach(); });
     c.x[0] = 0;
 }
 
+void OpenDefaultAudioOut(CPU& c) { open_out(c, c.x[0], c.x[1]); }         // (AudioOut*, os::SystemEvent*, const AudioOutParameter&)
+void OpenDefaultAudioOutNoEvent(CPU& c) { open_out(c, c.x[0], 0); }        // (AudioOut*, const AudioOutParameter&)
+
 void StartAudioOut(CPU& c) {
-    std::lock_guard lk(g_out.lock);
-    g_out.started = true;
-    g_out.cv.notify_all();
+    std::lock_guard lk(g_out_lock);
+    out_of(c.x[0]).started = true;
+    g_out_cv.notify_all();
     c.x[0] = 0;
 }
 
-void StopAudioOut(CPU&) {
-    std::lock_guard lk(g_out.lock);
-    g_out.started = false;
+void StopAudioOut(CPU& c) {
+    std::lock_guard lk(g_out_lock);
+    out_of(c.x[0]).started = false;
 }
 
-void CloseAudioOut(CPU&) {}
+void CloseAudioOut(CPU& c) {
+    std::lock_guard lk(g_out_lock);
+    Out& o = out_of(c.x[0]);
+    o.open = o.started = false;
+}
 
 void SetAudioOutBufferInfo(CPU& c) {  // (AudioOutBuffer*, void* data, size_t capacity, size_t size)
     st<uint64_t>(c.x[0], c.x[1]);
@@ -160,22 +291,24 @@ void SetAudioOutBufferInfo(CPU& c) {  // (AudioOutBuffer*, void* data, size_t ca
 void GetAudioOutBufferDataPointer(CPU& c) { c.x[0] = ld<uint64_t>(c.x[0]); }
 
 void AppendAudioOutBuffer(CPU& c) {  // (AudioOut*, AudioOutBuffer*)
-    std::lock_guard lk(g_out.lock);
-    out_stats(c.x[1]);
-    g_out.queued.push_back(c.x[1]);
-    g_out.cv.notify_all();
+    std::lock_guard lk(g_out_lock);
+    Out& o = out_of(c.x[0]);
+    out_stats(o, c.x[1]);
+    o.queued.push_back(c.x[1]);
+    g_out_cv.notify_all();
     c.x[0] = 1;  // bool: appended
 }
 
 void GetReleasedAudioOutBuffer(CPU& c) {
-    std::lock_guard lk(g_out.lock);
-    if (g_out.released.empty()) {
+    std::lock_guard lk(g_out_lock);
+    Out& o = out_of(c.x[0]);
+    if (o.released.empty()) {
         c.x[0] = 0;
         return;
     }
-    c.x[0] = g_out.released.front();
-    g_out.released.pop_front();
-    if (g_out.released.empty()) g_out.event->signaled = false;
+    c.x[0] = o.released.front();
+    o.released.pop_front();
+    if (o.released.empty()) o.event->signaled = false;
 }
 
 // What the output is, for games that ask (P5R's CRI mixer sizes its buffers from these; the sdk's own versions read
@@ -565,6 +698,7 @@ NX_HLE("_ZN2nn5audio26SetAudioDeviceOutputVolumeEPKNS0_15AudioDeviceNameEf", zer
 NX_HLE("_ZN2nn5audio41GetActiveAudioDeviceChannelCountForOutputEv", two);
 NX_HLE("_ZN2nn5audio27InitializeAudioOutParameterEPNS0_17AudioOutParameterE", InitializeAudioOutParameter);
 NX_HLE("_ZN2nn5audio19OpenDefaultAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventERKNS0_17AudioOutParameterE", OpenDefaultAudioOut);
+NX_HLE("_ZN2nn5audio19OpenDefaultAudioOutEPNS0_8AudioOutERKNS0_17AudioOutParameterE", OpenDefaultAudioOutNoEvent);  // NieR (SDK 12)
 NX_HLE("_ZN2nn5audio13StartAudioOutEPNS0_8AudioOutE", StartAudioOut);
 NX_HLE("_ZN2nn5audio12StopAudioOutEPNS0_8AudioOutE", StopAudioOut);
 NX_HLE("_ZN2nn5audio13CloseAudioOutEPNS0_8AudioOutE", CloseAudioOut);

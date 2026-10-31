@@ -616,6 +616,26 @@ void bind_sets(VkCommandBuffer cb, VkPipelineBindPoint point, const ProgramLayou
     }
 }
 
+// One 32-bit word of constant bank c[bank] of stage `st` as the shader reads it: c[2] (the driver's handle bank) from
+// what was bound (BindTexture at words 8 + 2n, BindImage at 72 + 2n, BindSeparateTexture at 90 + 2n,
+// BindSeparateSampler at 346 + 2n, measured on NieR; handles are 64-bit, the high word is 0), c[3+n] from uniform block n's memory.
+static uint32_t bank_word(int st, int bank, int word) {
+    if (word < 0) return 0;
+    if (bank == 2) {
+        const State& s = g_state;
+        auto slot = [&](int first, int count) { return word >= first && word < first + 2 * count && (word - first) % 2 == 0; };
+        if (slot(8, 32)) return uint32_t(s.textures[st][(word - 8) / 2]);
+        if (slot(72, 8)) return uint32_t(s.images[st][(word - 72) / 2]);
+        if (slot(90, State::kSeparateTextures)) return uint32_t(s.separate_textures[st][(word - 90) / 2]);
+        if (slot(346, State::kSeparateSamplers)) return uint32_t(s.separate_samplers[st][(word - 346) / 2]);
+        return 0;
+    }
+    if (bank < 3 || bank - 3 >= 18) return 0;
+    const Range& r = g_state.uniforms[st][bank - 3];
+    const uint8_t* p = r.address ? guest_bytes(r.address) : nullptr;
+    return p && uint64_t(word) * 4 + 4 <= r.size ? *reinterpret_cast<const uint32_t*>(p + uint64_t(word) * 4) : 0;
+}
+
 // Texture bindings of a program's stages and their handles, into g_textures. kNeedBreak: one needs a transfer or a
 // layout change (so no render pass may be open while the sets are built); kSampledPending: one has a pending clear.
 uint32_t gather_textures(const std::vector<const ShaderInfo*>& shaders) {
@@ -639,10 +659,16 @@ uint32_t gather_textures(const std::vector<const ShaderInfo*>& shaders) {
         uint64_t handle = 0;
         if (b->nvn.source == NvnSource::SamplerBinding && b->nvn.index >= 0 && b->nvn.index < 32)
             handle = g_state.textures[st][b->nvn.index];
-        else if (b->nvn.source == NvnSource::HandleInUniform && b->nvn.bank >= 3) {
-            const Range& r = g_state.uniforms[st][b->nvn.bank - 3];
-            const uint8_t* p = r.address ? guest_bytes(r.address) : nullptr;
-            if (p && uint64_t(b->nvn.word) * 4 + 4 <= r.size) handle = *reinterpret_cast<const uint32_t*>(p + b->nvn.word * 4);
+        else if (b->nvn.source == NvnSource::HandleInUniform)
+            handle = bank_word(st, b->nvn.bank, b->nvn.word);
+        else if (b->nvn.source == NvnSource::PackedHandle) {
+            handle = bank_word(st, b->nvn.bank, b->nvn.word);
+            if (b->nvn.bank2 >= 0) {
+                const int type = b->nvn.handle_type;
+                uint64_t sampler = type == 3 ? uint64_t(b->nvn.word2) : bank_word(st, b->nvn.bank2, b->nvn.word2);
+                if (type == 2 || type == 3) sampler <<= 20;
+                handle |= sampler;
+            }
         }
         t.handles[k] = handle;
         ResolvedTexture& r = t.resolved[k];

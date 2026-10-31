@@ -181,6 +181,20 @@ class ExtOps:
                                   f"(-{sh} >= {bits} ? 0 : (int64_t(a) >> -{sh}) + ((int64_t(a) >> (-{sh} - 1)) & 1))",
                           signed=True)
 
+    def i_sqshl(self, f, i, ops):
+        # Register form only (NieR's main, 4s lanes): shift by the signed low byte of b. Left shifts saturate when the
+        # top sh+1 bits of a are not all copies of its sign; right shifts truncate (arithmetic). FPSR.QC is not kept.
+        if ops[2].type != A.ARM64_OP_REG or not ops[0].vas:
+            raise Unhandled("sqshl by immediate or scalar")
+        bits = self.vinfo(ops[0])[0]
+        sh = f"int8_t(S1.u{bits}[k])"
+        mx, mn = f"int64_t(~0ull >> {65 - bits})", f"(-int64_t(~0ull >> {65 - bits}) - 1)"
+        top = f"(int64_t(a) >> ({bits - 1} - {sh}))"
+        return self.v_bin(i, ops, f"{sh} >= 0 ? (a == 0 ? 0 : ({sh} >= {bits} || ({top} != 0 && {top} != -1)) ? "
+                                  f"(a < 0 ? {mn} : {mx}) : int64_t(uint64_t(int64_t(a)) << {sh})) : "
+                                  f"(-{sh} >= {bits} ? (a < 0 ? -1 : 0) : int64_t(a) >> -{sh})",
+                          signed=True)
+
     def i_uabdl(self, f, i, ops):
         return self.widen(i, ops, "{a} > {b} ? {a} - {b} : {b} - {a}", False)
 

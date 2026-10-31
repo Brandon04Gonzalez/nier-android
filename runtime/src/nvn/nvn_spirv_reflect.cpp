@@ -107,13 +107,27 @@ void set_texture_handle(NvnMeaning& m, bool image, int bank, int word) {
     m.word = word;
     m.index = -1;
     m.source = NvnSource::Unknown;
+    if (bank > 0xFFFF && !image) {
+        // Separate texture and sampler (Ryujinx PackSlots/PackOffsets): texture part in c[slots & 0xffff] at word
+        // offsets & 0x3fff, sampler part in c[(slots >> 16) - 1] at word (offsets >> 14) & 0x3fff, the handle type in
+        // offsets >> 28. NieR: both in c[2], texture 90 + 2n, sampler 346 + 2n (in either part: they are ORed).
+        m.bank = bank & 0xFFFF;
+        m.bank2 = (bank >> 16) - 1;
+        m.word = word & 0x3FFF;
+        m.word2 = (word >> 14) & 0x3FFF;
+        m.handle_type = int(uint32_t(word) >> 28);
+        m.source = NvnSource::PackedHandle;
+        return;
+    }
     if (m.bank == 2) {
         // c[2]: texture handle of sampler binding n at byte 0x20 + 8n (verified on every stage), images after 32
         // texture slots at 0x120 + 8n (inferred from the agl compute shaders: words 72, 74, 76).
         int first = image ? 72 : 8;
-        if (word >= first && (word - first) % 2 == 0 && (word - first) / 2 < 32) {
+        if (word >= first && (word - first) % 2 == 0 && (word - first) / 2 < 32 && (image || word < 72)) {
             m.source = image ? NvnSource::ImageBinding : NvnSource::SamplerBinding;
             m.index = (word - first) / 2;
+        } else if (!image && word >= 90) {
+            m.source = NvnSource::PackedHandle;  // a separate texture slot read as a combined handle (sampler id 0)
         }
     } else if (m.bank >= 3 && !image) {
         m.source = NvnSource::HandleInUniform;

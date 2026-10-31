@@ -96,6 +96,11 @@ enum class NvnSource : uint8_t {
     SamplerBinding,   // texture whose handle is c[2] byte 0x20 + 8n: nvnCommandBufferBindTexture(stage, n)
     ImageBinding,     // image whose handle is c[2] byte 0x120 + 8n: nvnCommandBufferBindImage(stage, n) (inferred)
     HandleInUniform,  // texture whose handle the game wrote into uniform block `index` (c[bank]), at byte word * 4
+    // Texture whose handle the shader builds from words of c[bank] / c[bank2] (NieR): separate texture and sampler
+    // handles (nvnCommandBufferBindSeparateTexture/Sampler: c[2] words 90 + 2n and 346 + 2n), or a combined handle
+    // read from a separate texture slot. The translator packs both in the name: "cb<slots>_<offsets>"
+    // (Ryujinx TextureHandle.PackSlots / PackOffsets).
+    PackedHandle,
 };
 
 struct NvnMeaning {
@@ -103,6 +108,9 @@ struct NvnMeaning {
     int index = -1;      // the NVN binding n (uniform block, storage buffer, sampler, image)
     int bank = -1;       // constant bank c[bank]: the buffer itself (uniforms) or the bank holding the handle
     int word = -1;       // textures/images: 32-bit word of c[bank] holding the handle
+    int bank2 = -1;      // PackedHandle: bank and word of the sampler part (-1: none, the handle is combined)
+    int word2 = -1;
+    int handle_type = 0; // PackedHandle: Ryujinx TextureHandleType (1 OR, 2 sampler id << 20, 3 constant sampler)
     int sb_slot = -1;    // storage buffers: the translator's slot (order found), from the name "<stage>_s<slot>"
     int c0_offset = -1;  // storage buffers: byte offset of the descriptor in c[0]; -1 = not known (see apply_harness)
     bool default_bank = false;  // texture handle bank given by the translator as "the texture bank" (-1), i.e. c[2]

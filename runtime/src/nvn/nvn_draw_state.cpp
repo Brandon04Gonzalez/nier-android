@@ -70,8 +70,11 @@ void draw_command(VkCommandBuffer cb, const Cmd& c, const CmdList& list, const T
             }
             break;
         }
-        case Cmd::BindTexture:
-            if (c.i[0] >= 0 && c.i[0] < kStages && c.i[1] >= 0 && c.i[1] < 32) s.textures[c.i[0]][c.i[1]] = c.a[0];
+        case Cmd::BindTexture:  // mask 0: BindTexture, 1: BindSeparateTexture, 2: BindSeparateSampler
+            if (c.i[0] < 0 || c.i[0] >= kStages || c.i[1] < 0) break;
+            if (c.mask == 0 && c.i[1] < 32) s.textures[c.i[0]][c.i[1]] = c.a[0];
+            if (c.mask == 1 && c.i[1] < State::kSeparateTextures) s.separate_textures[c.i[0]][c.i[1]] = c.a[0];
+            if (c.mask == 2 && c.i[1] < State::kSeparateSamplers) s.separate_samplers[c.i[0]][c.i[1]] = c.a[0];
             break;
         case Cmd::BindVertexBuffer:
             if (c.i[0] >= 0 && c.i[0] < 16) s.vertex_buffers[c.i[0]] = {c.a[0], c.a[1]};

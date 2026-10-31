@@ -23,6 +23,11 @@ struct State {
     Range uniforms[kStages][18], storage[kStages][16], vertex_buffers[16];
     uint64_t textures[kStages][32] = {};  // NVN texture handles by sampler binding
     uint64_t images[kStages][16] = {};    // NVN image handles by image binding (BindImage)
+    // BindSeparateTexture / BindSeparateSampler (NieR): c[2] words 90 + 2n and 346 + 2n. NVN has 128 separate
+    // texture slots (90 + 2 * 128 = 346); NieR uses the first 32, so only kSeparateTextures are kept.
+    static constexpr int kSeparateTextures = 64, kSeparateSamplers = 32;
+    uint64_t separate_textures[kStages][kSeparateTextures] = {};
+    uint64_t separate_samplers[kStages][kSeparateSamplers] = {};
     uint64_t texture_pool = 0, sampler_pool = 0;
     std::vector<VertexAttrib> attribs;
     std::vector<VertexStream> streams;
