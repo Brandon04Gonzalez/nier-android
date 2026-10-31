@@ -136,6 +136,13 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
 | **720p, A/B controlado sin partida guardada** (`c_t1` / `c_t0`) | **16,9 / 16,5** | último tramo: 63 vs 123 MB subidos por frame. En PC la ganancia es pequeña (+2–3 %); en el móvil copiar a memoria no cacheada cuesta mucho más |
 | `NX_EXP_NO_WB=1` | 15,9 | no quita estos write-backs: descartado |
 
+**Perfil de GPU por pases** (`NX_GPU_PROFILE=1`, `runs/gprof`, vuelo a 720p, ~30 ms de GPU por frame): 11,6 ms fuera
+de los pases (limpiezas, subidas, copias; ~51 por frame), **8,8 ms el mapa de sombras 2048×2048** (`fs f69e0c3893bfa4fa`,
+120 draws y 243k vértices por frame), 2,2 ms el pase principal, 1,5 ms un compute (`d9db47fa2f852c79`). Que una RTX 4060
+tarde 8,8 ms en un mapa de sombras apunta a los vértices leídos desde memoria del host por PCIe (el anillo de subidas):
+en PC la GPU sale peor de lo que será en un móvil (memoria compartida). Siguiente: medir lo mismo en la tablet, y en PC
+probar a copiar los vértices estables a memoria de la GPU.
+
 > Para medir, borra antes `private/nier/user/save`: con una partida guardada la ruta de teclas carga la partida y
 > empieza en otro punto (las cifras no son comparables). La partida de las pruebas largas está en `user/save_bak_long1`.
 
