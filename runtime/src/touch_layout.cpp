@@ -12,6 +12,8 @@
 // the right half drags the right stick (the camera). The launcher's editor (games/p5r/java: ControlsEditor.java, which
 // has a copy of this table) moves any of them, the stick's ring included (NX_TOUCH_LAYOUT).
 //
+// NieR:Automata uses P5R's layout (attack/evade/pod buttons are the same Switch buttons).
+//
 // Games without a layout here keep their own touch handling (Hades: zones around the thumb).
 //
 // Elsewhere touch_overlay() draws nothing, except with NX_OVERLAY_DEMO=1 (the buttons at rest), to check the look
@@ -79,6 +81,7 @@ struct Layout {
 const Layout kLayouts[] = {
     {"wonder", kWonder, std::size(kWonder), false, kY, 0.15f, 0.72f},
     {"p5r", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},
+    {"nier", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},  // the same buttons; ControlsEditor.java has the copy
 };
 
 const Layout* layout() {

@@ -5,7 +5,7 @@
 #   -TestPackage  installs next to the normal build: package <package>.nce, label "<label> (NCE)"
 #   -Release      the public build (CMake NX_RELEASE: no nx.log file, no file-triggered diagnostics; logcat only);
 #                 without it the build directory keeps the setting it has
-param([string]$Game = "p5r", [switch]$Install, [switch]$Nce, [switch]$TestPackage, [switch]$Release)
+param([string]$Game = "p5r", [switch]$Install, [string]$Abis = "arm64-v8a", [switch]$Nce, [switch]$TestPackage, [switch]$Release)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot
 # The SDK: ANDROID_HOME, else C:\Android\sdk, else Android Studio's default (%LOCALAPPDATA%\Android\Sdk).
@@ -19,32 +19,38 @@ $jar = "$sdk\platforms\android-35\android.jar"
 # Hades keeps the layout from before there were other games (private\apk, private\ba).
 $priv = if ($Game -eq "hades") { "$root\private" } else { "$root\private\$Game" }
 $out = if ($Nce) { "$priv\apk_nce" } else { "$priv\apk" }
-$build = if ($Nce) { "$priv\ba_nce" } else { "$priv\ba" }
 $nceFlag = if ($Nce) { "ON" } else { "OFF" }
-
-if (-not (Test-Path "$build\build.ninja")) {
-    cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=$ndk\build\cmake\android.toolchain.cmake" `
-        -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 -DANDROID_STL=c++_static "-DNX_GAME=$Game" "-DNX_NCE=$nceFlag"
+$abiList = @($Abis -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+function BuildDir($abi) {
+    if ($Nce) { "$priv\ba_nce" } elseif ($abi -eq "arm64-v8a") { "$priv\ba" } else { "$priv\ba_$abi" }
 }
-if ($Release) { cmake -B $build -DNX_RELEASE=ON | Out-Null }
-# Libraries packed with lib<game>.so: the P5R native build prepares the game on the phone (libp5rimport.so) with the
-# shader translator (libspirvharness.so, built in Docker by games/p5r/tools/build_harness_android.sh).
 $extraLibs = @()
-$targets = @($Game)
-if ($Nce -and $Game -eq "p5r") {
-    $harness = "$root\private\build\spirv_harness_android\libspirvharness.so"
-    if (-not (Test-Path $harness)) {
-        throw "missing $harness. Build it once, with Docker Desktop running, from the repository root: docker run --rm -v ""${root}:/src"" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh"
+foreach ($abi in $abiList) {
+    $build = BuildDir $abi
+    if (-not (Test-Path "$build\build.ninja")) {
+        cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=$ndk\build\cmake\android.toolchain.cmake" `
+            "-DANDROID_ABI=$abi" -DANDROID_PLATFORM=android-29 -DANDROID_STL=c++_static "-DNX_GAME=$Game" "-DNX_NCE=$nceFlag"
     }
-    $targets += "p5rimport"
-    $extraLibs += @("$build\libp5rimport.so", $harness)
+    if ($Release) { cmake -B $build -DNX_RELEASE=ON | Out-Null }
+    $targets = @($Game)
+    if ($Nce -and $Game -eq "p5r" -and $abi -eq "arm64-v8a") {
+        $harness = "$root\private\build\spirv_harness_android\libspirvharness.so"
+        if (-not (Test-Path $harness)) {
+            throw "missing $harness. Build it once, with Docker Desktop running, from the repository root: docker run --rm -v ""${root}:/src"" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh"
+        }
+        $targets += "p5rimport"
+        $extraLibs += @("$build\libp5rimport.so", $harness)
+    }
+    cmake --build $build --target @targets
+    if ($LASTEXITCODE) { throw "native build failed ($abi)" }
 }
-cmake --build $build --target @targets
-if ($LASTEXITCODE) { throw "native build failed" }
 
 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force "$out\lib\arm64-v8a", "$out\res" | Out-Null
-& "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-strip.exe" --strip-unneeded -o "$out\lib\arm64-v8a\lib$Game.so" "$build\lib$Game.so"
+New-Item -ItemType Directory -Force "$out\res" | Out-Null
+foreach ($abi in $abiList) {
+    New-Item -ItemType Directory -Force "$out\lib\$abi" | Out-Null
+    & "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-strip.exe" --strip-unneeded -o "$out\lib\$abi\lib$Game.so" "$(BuildDir $abi)\lib$Game.so"
+}
 foreach ($lib in $extraLibs) {
     & "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-strip.exe" --strip-unneeded -o "$out\lib\arm64-v8a\$(Split-Path $lib -Leaf)" $lib
 }
@@ -80,8 +86,10 @@ Compress-Archive -Path "lib" -DestinationPath "$out\lib.zip" -Force
 Pop-Location
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $apk = [System.IO.Compression.ZipFile]::Open("$out\base.apk", "Update")
-foreach ($so in Get-ChildItem "$out\lib\arm64-v8a" -Filter *.so) {
-    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, $so.FullName, "lib/arm64-v8a/$($so.Name)", "Optimal") | Out-Null
+foreach ($abi in $abiList) {
+    foreach ($so in Get-ChildItem "$out\lib\$abi" -Filter *.so) {
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, $so.FullName, "lib/$abi/$($so.Name)", "Optimal") | Out-Null
+    }
 }
 # Java of the game's own (games\<game>\java, e.g. Wonder's home screen): javac against android.jar, d8 to classes.dex.
 $java = "$root\games\$Game\java"

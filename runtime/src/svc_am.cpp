@@ -170,9 +170,15 @@ std::shared_ptr<Service> library_applet(uint32_t applet_id, uint32_t mode) {
                     std::memcpy(out.data(), &cancelled, 8);
                 }
             } else if (st->id == 0x11) { // swkbd (SoftwareKeyboard)
-                // Swkbd output storage: u32 SwkbdResult (0 = Ok) + string buffer (0x7D4 bytes)
+                // Swkbd output storage: u32 SwkbdResult (0 = Ok) + string buffer (0x7D4 bytes, UTF-16). The text is
+                // NX_SWKBD_TEXT, else the user's nickname: NieR rejects names under two characters (empty = a loop).
                 out.assign(0x7D8, 0);
-                log("am: swkbd applet (0x11) invoked; returning default OK output storage");
+                const char* env = std::getenv("NX_SWKBD_TEXT");
+                std::string text = env && *env ? env : user_last_opened().nickname;
+                if (text.size() < 2) text = "Player";
+                for (size_t i = 0; i < text.size() && 4 + 2 * i + 2 < out.size(); i++)
+                    out[4 + 2 * i] = uint8_t(text[i]);  // ASCII nicknames: UTF-16LE low byte
+                log("am: swkbd applet (0x11) invoked; returning OK with \"%s\"", text.c_str());
             } else {
                 log("am: library applet 0x%x is not emulated; answering with zeroed output storage", st->id);
                 // Never return a 0-byte storage: callers read a return header from PopOutData

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NieR:Automata: a NativeActivity (the runtime in libnier.so, android_main) behind a home screen with the options
+     (games/nier/java: Launcher.java, which writes config.txt). The game data, prepared on the PC from the player's
+     own dump (the same layout as private/nier: analysis/, extract/romfs/, spirv/), lives in Internal storage/NieR
+     Automata, which needs all-files access. There is no on-phone import: the data is copied there from the PC. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.nierrecomp"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- Vulkan 1.1: the mid-range GPUs the runtime targets (Adreno 610, PowerVR BXM) have nothing newer. -->
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <application
+        android:label="NieR Automata"
+        android:requestLegacyExternalStorage="true"
+        android:hasCode="true"
+        android:extractNativeLibs="true"
+        android:debuggable="true"
+        android:isGame="true"
+        android:appCategory="game"
+        android:largeHeap="true"
+        android:theme="@style/Fullscreen">
+        <!-- Home screen: data check, options (config.txt), saves, mods, then the game. -->
+        <activity
+            android:name=".Launcher"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:screenOrientation="sensorLandscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- Where the on-screen controls go (NX_TOUCH_LAYOUT), full screen like the game. -->
+        <activity
+            android:name=".ControlsEditor"
+            android:exported="false"
+            android:theme="@style/Fullscreen"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+        <!-- The game. Exported: test runs can start it directly with adb. -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:resizeableActivity="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">
+            <meta-data android:name="android.app.lib_name" android:value="nier" />
+        </activity>
+    </application>
+</manifest>
