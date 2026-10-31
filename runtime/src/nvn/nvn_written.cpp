@@ -196,18 +196,74 @@ bool written_indirect(VkCommandBuffer cb, const uint8_t* p) {
     return true;
 }
 
+// The vertices [lo, hi] and the last instance a draw fetches; false when unknown (no count, no indices).
+static bool fetched_range(bool indexed, const Cmd& c, uint64_t& lo, uint64_t& hi, uint64_t& inst_lo, uint64_t& inst_hi) {
+    uint32_t count = uint32_t(indexed ? c.i[0] : c.i[1]);
+    if (!count) return false;
+    if (indexed) {
+        const uint8_t* p = guest_bytes(c.a[0]);
+        if (!p) return false;
+        uint32_t isz = index_size(c.mask), restart = isz == 1 ? 0xFF : isz == 2 ? 0xFFFF : 0xFFFFFFFFu;
+        uint32_t mn = UINT32_MAX, mx = 0;
+        for (uint32_t k = 0; k < count; k++) {
+            uint32_t v = isz == 1 ? p[k] : isz == 2 ? reinterpret_cast<const uint16_t*>(p)[k] : reinterpret_cast<const uint32_t*>(p)[k];
+            if (v == restart) continue;
+            mn = std::min(mn, v), mx = std::max(mx, v);
+        }
+        if (mn == UINT32_MAX || int64_t(mn) + c.i[1] < 0) return false;
+        lo = uint64_t(int64_t(mn) + c.i[1]), hi = uint64_t(int64_t(mx) + c.i[1]);
+    } else {
+        lo = uint32_t(c.i[0]), hi = uint64_t(uint32_t(c.i[0])) + count - 1;
+    }
+    inst_lo = uint32_t(c.i[2]);
+    inst_hi = inst_lo + uint32_t(std::max(1, c.i[3])) - 1;
+    return true;
+}
+
 bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const Cmd& c, DrawInputs& in) {
     // Vertex buffers: the bound ranges of the streams the vertex shader reads (the pipeline declares no others).
     for (const ShaderIo& io : vs->refl.inputs)
         if (io.location < g_state.attribs.size() && g_state.attribs[io.location].stream < 15)
             in.used |= 1u << g_state.attribs[io.location].stream;
+    // Only the bytes of the vertices the draw fetches (NieR binds whole vertex pools of several MB per draw: ~80 MB
+    // a frame were copied, 1% of it the same as the last copy). The copy keeps its place in the stream, so the
+    // binding (offset - lo) and the vertex numbers do not change. Off by default (NX_VERTEX_TRIM=1: on): in the
+    // prologue flight it changed neither the bytes uploaded (~76 MB a frame) nor the fps (PROGRESO, session 1).
+    static const bool trim = std::getenv("NX_VERTEX_TRIM") && std::getenv("NX_VERTEX_TRIM")[0] == '1';
+    uint64_t lo = 0, hi = 0, inst_lo = 0, inst_hi = 0;
+    const bool ranged = trim && fetched_range(indexed, c, lo, hi, inst_lo, inst_hi);
     for (uint32_t s = 0; s < 15; s++) {
         if (!(in.used >> s & 1)) continue;
         const Range& r = g_state.vertex_buffers[s];
         const uint8_t* p = r.address ? guest_bytes(r.address) : nullptr;
         uint64_t size = p ? std::min<uint64_t>(r.size, 64ull << 20) : 0;
         g_upload_kind = kUploadVertex;
-        in.vertex[s] = read_upload(cb, p, size, std::max<uint64_t>((size + 15) & ~15ull, 16), 16);
+        uint64_t from = 0, end = 0;
+        if (ranged && size > 4096 && s < g_state.streams.size()) {
+            const VertexStream& st = g_state.streams[s];
+            from = UINT64_MAX;
+            for (const ShaderIo& io : vs->refl.inputs) {
+                if (io.location >= g_state.attribs.size() || g_state.attribs[io.location].stream != s) continue;
+                const VertexAttrib& va = g_state.attribs[io.location];
+                uint64_t first = st.divisor ? inst_lo / st.divisor : lo, last = st.divisor ? inst_hi / st.divisor : hi;
+                from = std::min(from, first * st.stride + va.offset);
+                end = std::max(end, last * st.stride + va.offset + vk_block_bytes(vk_vertex_format(va.format)));
+            }
+            from &= ~uint64_t(255);  // the attributes keep their alignment
+        }
+        if (ranged && from < end && end <= size && (from > 0 || end + 4096 < size) && !written_overlaps(p, size)) {
+            Upload u = dedup_upload(p + from, end - from, (end - from + 15) & ~15ull, 16);
+            if (u.offset >= from) {
+                u.offset -= from, u.ptr -= from;
+            } else {  // too near the ring's start to bind at offset - from: a copy of [0, end) with only the fetched part
+                u = upload_alloc((end + 15) & ~15ull, 16);
+                frame_guest_read(p + from, end - from);
+                std::memcpy(u.ptr + from, p + from, end - from);
+            }
+            in.vertex[s] = u;
+        } else {
+            in.vertex[s] = read_upload(cb, p, size, std::max<uint64_t>((size + 15) & ~15ull, 16), 16);
+        }
         g_upload_kind = kUploadOther;
     }
     if (!indexed) return true;

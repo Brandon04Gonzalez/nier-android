@@ -25,6 +25,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -48,11 +49,18 @@ import java.util.Map;
  *   graphics    low (default), medium or high: textures one mip smaller (NX_LOD_BIAS=1), half a mip, or the game's own
  *   frame rate  30 (NX_FPS_CAP=30, default: runtime nvn_queue.cpp holds the present interval at 2) or 60
  *   shadows     on (NX_SHADOWS=1, default) or off (0: runtime nvn_draw.cpp skips the draws into shadow maps)
+ *   bloom       experimental: on (NX_DISABLE_BLOOM=0, default) or off (1: runtime nvn_draw.cpp skips every draw into a
+ *               colour target's smaller mip levels, which is where bloom and blur chains go, and maybe other effects)
  *   FPS counter off (default) or on (NX_SHOW_FPS)
  *   on-screen controls on (default) or off (NX_TOUCH_SHOW), their size (NX_TOUCH_SIZE) and opacity (NX_TOUCH_OPACITY),
  *               and where they are (NX_TOUCH_LAYOUT, written by ControlsEditor)
- * It imports or exports the saves (user/save, SaveFiles.java: a ZIP or a folder in, a ZIP in Download out) and installs
- * or turns on and off the mods (mods/<Name>/romfs, Mods.java).
+ *   touch stick and camera sensitivity  NX_STICK_SENSITIVITY and NX_CAMERA_SENSITIVITY, percent (100 default): how far
+ *               the drawn left stick and the camera drag go for the same thumb travel (platform_android_input.cpp)
+ *   gamepad     physical controller buttons by position, Nintendo (NX_GAMEPAD_LAYOUT=0, default: the bottom button is
+ *               B) or by label, Xbox / PC (1: the bottom button is A)
+ * It imports or exports the saves (user/save, SaveFiles.java: a ZIP or a folder in, a ZIP in Download out), installs
+ * or turns on and off the mods (mods/<Name>/romfs, Mods.java) and exports the logs (logcat tag "nier" and nx.log) to
+ * Download/nier-log.txt.
  * The game data is prepared on the PC from the player's own copy of the game (the same layout as private/nier:
  * analysis/ or exefs/, extract/romfs/, spirv/) and copied to Internal storage/NieR Automata: there is no on-phone
  * import.
@@ -96,7 +104,16 @@ public class Launcher extends Activity {
 
     static File dataDir() { return new File(Environment.getExternalStorageDirectory(), DATA); }
 
-    boolean hasAccess() { return Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager(); }
+    // Android 10 (API 29, the minimum) has no Environment.isExternalStorageManager: the call sits in a class of its own,
+    // loaded only on 11 and later, so verifying the launcher on 10 never meets the missing method.
+    static final class Api30Helper {
+        static boolean isExternalStorageManager() { return Environment.isExternalStorageManager(); }
+    }
+
+    boolean hasAccess() {
+        if (Build.VERSION.SDK_INT < 30) return true;
+        return Api30Helper.isExternalStorageManager();
+    }
 
     String displayName(Uri uri) {
         try (Cursor c = getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
@@ -208,6 +225,12 @@ public class Launcher extends Activity {
                 new String[] {"30 fps", "60 fps (experimental)"}, new String[] {"30 fps", "60 fps (experimental)"}, 0));
         options.add(new Option("NX_SHADOWS", "Sombras", "Shadows", new String[] {"0", "1"},
                 new String[] {"Desactivadas", "Activadas"}, new String[] {"Off", "On"}, 1));
+        // Experimental: the runtime's heuristic (draws into mip levels above 0) was made on P5R, so it may take other
+        // effects with the bloom. Bloom stays on unless the player turns it off.
+        options.add(new Option("NX_DISABLE_BLOOM", "Bloom (experimental)", "Bloom (experimental)",
+                new String[] {"0", "1"},
+                new String[] {"Activado (normal)", "Desactivado"},
+                new String[] {"On (normal)", "Off"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
         options.add(new Option("NX_TOUCH_SHOW", "Controles táctiles", "On-screen controls", new String[] {"1", "0"},
@@ -218,6 +241,18 @@ public class Launcher extends Activity {
         options.add(new Option("NX_TOUCH_OPACITY", "Opacidad de los botones", "Button opacity",
                 new String[] {"50", "85", "100"}, new String[] {"Baja", "Normal", "Alta"},
                 new String[] {"Low", "Normal", "High"}, 1));
+        options.add(new Option("NX_STICK_SENSITIVITY", "Sensibilidad de la palanca táctil", "Touch stick sensitivity",
+                new String[] {"50", "75", "100", "125", "150", "200"},
+                new String[] {"50%", "75%", "100%", "125%", "150%", "200%"},
+                new String[] {"50%", "75%", "100%", "125%", "150%", "200%"}, 2));
+        options.add(new Option("NX_CAMERA_SENSITIVITY", "Sensibilidad de la cámara táctil", "Touch camera sensitivity",
+                new String[] {"50", "75", "100", "125", "150", "200", "250"},
+                new String[] {"50%", "75%", "100%", "125%", "150%", "200%", "250%"},
+                new String[] {"50%", "75%", "100%", "125%", "150%", "200%", "250%"}, 2));
+        options.add(new Option("NX_GAMEPAD_LAYOUT", "Botones del mando físico", "Physical gamepad buttons",
+                new String[] {"0", "1"},
+                new String[] {"Nintendo (A a la derecha, B abajo)", "Xbox / PC (A abajo, B a la derecha)"},
+                new String[] {"Nintendo (A right, B down)", "Xbox / PC (A down, B right)"}, 0));
         build();
     }
 
@@ -334,6 +369,19 @@ public class Launcher extends Activity {
                 manageMods();
             }
         });
+
+        // Logs: logcat (the runtime's tag is the game id) and nx.log, into one text file in Download to send.
+        addRow(root, t("Registros de depuración", "Debug logs"), t("Exportar registros", "Export logs"),
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        if (!hasAccess()) {
+                            askAccess();
+                            return;
+                        }
+                        exportLogs();
+                    }
+                });
 
         play = new Button(this);
         play.setTextSize(20);
@@ -572,6 +620,73 @@ public class Launcher extends Activity {
                 })
                 .setNegativeButton(t("Cancelar", "Cancel"), null)
                 .show();
+    }
+
+    // ---- logs ----
+
+    static final int LOG_TAIL = 1 << 20;  // the end of nx.log that goes in (the file grows with every run)
+    static final int SHARE_TEXT = 100000;  // what the share sheet gets as text (an Intent travels in ~1 MB at most)
+
+    // The end of a text file, at most `max` bytes, from the start of a line.
+    static String tail(File f, int max) throws java.io.IOException {
+        try (java.io.RandomAccessFile r = new java.io.RandomAccessFile(f, "r")) {
+            long start = Math.max(0, r.length() - max);
+            byte[] buf = new byte[(int) (r.length() - start)];
+            r.seek(start);
+            r.readFully(buf);
+            String s = new String(buf, "UTF-8");
+            int nl = start > 0 ? s.indexOf('\n') : -1;
+            return nl >= 0 ? s.substring(nl + 1) : s;
+        }
+    }
+
+    // Download/nier-log.txt: the device, the runtime's logcat lines (its tag is the game id, "nier"), crash dumps
+    // (DEBUG), the Vulkan driver's lines and the end of nx.log (written next to the data by non-release builds); then
+    // the share sheet with the same text (its end, when long).
+    void exportLogs() {
+        try {
+            File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (!dl.isDirectory() && !dl.mkdirs()) throw new java.io.IOException("cannot make " + dl);
+            File out = new File(dl, "nier-log.txt");
+            StringBuilder sb = new StringBuilder();
+            sb.append("=== NieR Automata Recomp Log Export ===\n");
+            try {
+                sb.append("App: ").append(getPackageManager().getPackageInfo(getPackageName(), 0).versionName).append('\n');
+            } catch (Exception ignored) {
+            }
+            sb.append("Device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');
+            sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
+            sb.append("Date: ").append(new java.util.Date()).append("\n\n=== logcat ===\n");
+            try {
+                Process p = Runtime.getRuntime().exec(new String[] {"logcat", "-d", "-s", "nier:V", "DEBUG:V", "vulkan:V"});
+                try (BufferedReader br = new BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
+                    for (String line; (line = br.readLine()) != null; ) sb.append(line).append('\n');
+                }
+            } catch (Exception e) {
+                sb.append("logcat capture error: ").append(e.getMessage()).append('\n');
+            }
+            File nxLog = new File(dataDir(), "nx.log");
+            if (nxLog.canRead()) {
+                sb.append("\n=== nx.log").append(nxLog.length() > LOG_TAIL ? " (its last MB)" : "").append(" ===\n");
+                sb.append(tail(nxLog, LOG_TAIL));
+            }
+            try (FileWriter w = new FileWriter(out)) {
+                w.write(sb.toString());
+            }
+            // Listed at once by the file pickers and the Files app, as the saves' export.
+            android.media.MediaScannerConnection.scanFile(this, new String[] {out.getPath()}, null, null);
+            Toast.makeText(this, Lang.f("Registros exportados a Descargas/%s", "Logs exported to Download/%s",
+                    out.getName()), Toast.LENGTH_SHORT).show();
+            String text = sb.length() > SHARE_TEXT ? sb.substring(sb.length() - SHARE_TEXT) : sb.toString();
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("text/plain");
+            share.putExtra(Intent.EXTRA_SUBJECT, "NieR Automata debug log");
+            share.putExtra(Intent.EXTRA_TEXT, text);
+            startActivity(Intent.createChooser(share, t("Compartir registros", "Share logs")));
+        } catch (Exception e) {
+            tell(t("Registros de depuración", "Debug logs"), Lang.f("No se pudieron exportar los registros: %s",
+                    "Could not export the logs: %s", String.valueOf(e.getMessage())));
+        }
     }
 
     @Override

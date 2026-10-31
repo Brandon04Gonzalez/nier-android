@@ -95,6 +95,29 @@ final class Lang {
         put("Mods", "Mods", "Mods", "Mod", "Mods", "MOD", "모드", "模组", "模組");
         put("Install", "Installer", "Installieren", "Installa", "Instalar", "インストール", "설치", "安装", "安裝");
         put("Manage", "Gérer", "Verwalten", "Gestisci", "Gerenciar", "管理", "관리", "管理", "管理");
+        put("Bloom (experimental)", "Bloom (expérimental)", "Bloom (experimentell)", "Bloom (sperimentale)",
+                "Bloom (experimental)", "ブルーム（実験的）", "블룸 (실험적)", "泛光（实验性）", "泛光（實驗性）");
+        put("On (normal)", "Activé (normal)", "An (normal)", "Attivato (normale)", "Ativado (normal)", "オン（通常）",
+                "켬 (기본)", "开（正常）", "開（正常）");
+        put("Touch stick sensitivity", "Sensibilité du stick tactile", "Empfindlichkeit des Touch-Sticks",
+                "Sensibilità della levetta touch", "Sensibilidade do analógico na tela", "タッチスティックの感度",
+                "터치 스틱 감도", "触屏摇杆灵敏度", "觸控搖桿靈敏度");
+        put("Touch camera sensitivity", "Sensibilité de la caméra tactile", "Empfindlichkeit der Touch-Kamera",
+                "Sensibilità della telecamera touch", "Sensibilidade da câmera na tela", "タッチカメラの感度",
+                "터치 카메라 감도", "触屏视角灵敏度", "觸控視角靈敏度");
+        put("Physical gamepad buttons", "Boutons de la manette", "Tasten des Controllers", "Pulsanti del controller",
+                "Botões do controle físico", "コントローラーのボタン配置", "게임패드 버튼 배치", "实体手柄按键",
+                "實體手把按鍵");
+        put("Nintendo (A right, B down)", "Nintendo (A à droite, B en bas)", "Nintendo (A rechts, B unten)",
+                "Nintendo (A a destra, B in basso)", "Nintendo (A à direita, B embaixo)", "Nintendo（A が右、B が下）",
+                "Nintendo (A 오른쪽, B 아래)", "Nintendo（A 在右，B 在下）", "Nintendo（A 在右，B 在下）");
+        put("Xbox / PC (A down, B right)", "Xbox / PC (A en bas, B à droite)", "Xbox / PC (A unten, B rechts)",
+                "Xbox / PC (A in basso, B a destra)", "Xbox / PC (A embaixo, B à direita)", "Xbox / PC（A が下、B が右）",
+                "Xbox / PC (A 아래, B 오른쪽)", "Xbox / PC（A 在下，B 在右）", "Xbox / PC（A 在下，B 在右）");
+        put("Debug logs", "Journaux de débogage", "Debug-Protokolle", "Log di debug", "Registros de depuração",
+                "デバッグログ", "디버그 로그", "调试日志", "除錯記錄");
+        put("Export logs", "Exporter les journaux", "Protokolle exportieren", "Esporta i log", "Exportar registros",
+                "ログをエクスポート", "로그 내보내기", "导出日志", "匯出記錄");
         // Status and the play button
         put("All-files access is needed to read the game data.",
                 "L'accès à tous les fichiers est nécessaire pour lire les données du jeu.",
@@ -265,6 +288,17 @@ final class Lang {
                 "Ein Mod-Ordner konnte nicht umbenannt werden: %s", "Impossibile rinominare la cartella di una mod: %s",
                 "Não foi possível renomear a pasta de um mod: %s", "MOD フォルダの名前を変更できませんでした：%s",
                 "모드 폴더 이름을 바꿀 수 없습니다: %s", "无法重命名模组文件夹：%s", "無法重新命名模組資料夾：%s");
+        // Logs
+        put("Logs exported to Download/%s", "Journaux exportés dans Download/%s", "Protokolle nach Download/%s exportiert",
+                "Log esportati in Download/%s", "Registros exportados para Download/%s",
+                "ログを Download/%s に書き出しました", "로그를 Download/%s 에 내보냈습니다", "日志已导出到 Download/%s",
+                "記錄已匯出到 Download/%s");
+        put("Share logs", "Partager les journaux", "Protokolle teilen", "Condividi i log", "Compartilhar registros",
+                "ログを共有", "로그 공유", "分享日志", "分享記錄");
+        put("Could not export the logs: %s", "Impossible d'exporter les journaux : %s",
+                "Protokolle konnten nicht exportiert werden: %s", "Impossibile esportare i log: %s",
+                "Não foi possível exportar os registros: %s", "ログを書き出せませんでした：%s",
+                "로그를 내보낼 수 없습니다: %s", "无法导出日志：%s", "無法匯出記錄：%s");
         // The controls editor
         put("Drag the controls where you want them.\nThe d-pad and A B X Y move together. Red: they touch.",
                 "Faites glisser les commandes où vous voulez.\nLa croix et A B X Y bougent ensemble. En rouge : elles se touchent.",
