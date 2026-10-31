@@ -6,8 +6,9 @@
 
 En PC arranca, pasa la pantalla de sistema YoRHa, el título, Nueva partida (ranura, nombre, dificultad) y **juega el
 prólogo en 3D** (unidades de vuelo sobre las nubes, 2B/12H, rayos) con la imagen correcta. Rendimiento en PC todavía
-bajo en el prólogo (~10 fps en una RTX 4060: 86 MB subidos por frame y 20 ms de write-backs). Android: lanzador en
-preparación (opciones de P5R), APK aún no probado.
+bajo en el prólogo (~10 fps en una RTX 4060: ~80 MB de vértices subidos por frame y 20 ms de write-backs). Android:
+lanzador con las opciones de P5R v0.5.0 + mods y APK arm64; **todavía sin probar en un dispositivo** (la tablet no
+estaba conectada y la usa la sesión de P5R).
 
 ## Cómo funciona el port
 
@@ -94,10 +95,38 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
    título, Nueva partida, nombre, dificultad, vuelo con la escuadra, etiquetas IFF, rayos. Películas en negro/verde en
    PC (sin decodificador VP9 en Windows; en Android, `AMediaCodec`).
 
+9. **Lanzador Android** (`games/nier/java/io/github/nierrecomp`, paquete `io.github.nierrecomp`, datos en
+   `/storage/emulated/0/NieR Automata`): resolución 360p/480p/**720p**/1080p, pantalla completa (estirar), gráficos,
+   sombras, **30**/60 fps, contador de FPS (apagado), controles táctiles (tamaño, opacidad, editor de posiciones con
+   L3/R3), sensibilidad del stick y de la cámara táctil, mando Nintendo/Xbox, exportar registros
+   (`Download/nier-log.txt`), bloom experimental (apagado), partidas (importar/exportar `user/save`), idiomas, atajo con
+   imagen propia y **Mods** (instalar .zip/.cpk en `mods/<nombre>/romfs`, activar/desactivar renombrando a `_nombre`).
+   Comprueba `extract/romfs/data000.cpk`, `spirv/results.tsv` y `analysis/main.bin`. Icono neutro de texto.
+10. **Fusión de `p5r-main` v0.5.0** (los arreglos de `GUIA_ARQUITECTURA_PORTS_ANDROID.md`: Xclipse BC por CPU, Mali
+    R11G11B10F a RGBA16F, Adreno 8xx sin trocear envíos, Android 10, mods sin distinguir mayúsculas, L3/R3,
+    sensibilidad, SixAxis, mando Xbox, exportar logs). Sin conflictos; NieR sigue arrancando en PC.
+11. Controles táctiles: NieR usa la tabla de P5R (`touch_layout.cpp`, ahora con L3/R3).
+12. `android/build_apk.ps1` de la rama `p4g` (opción `-Abis`, para compilar también x86_64 para el emulador).
+
+### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
+
+| Variante | fps | Notas |
+|---|---|---|
+| Base | **9,8** | replay 26 ms, espera de GPU 36 ms, write-backs 20,7 ms (6/frame, 5,16 MB comparados, 0 % cambiado), ~79 MB subidos/frame |
+| `NX_BUFFER_CACHE=1` | 9,8 | sin cambio: las subidas son vértices que cambian (1 % igual a la copia anterior) |
+| `NX_VERTEX_TRIM=1` (nuevo: solo el rango de vértices que lee cada draw) | 9,1 | los bytes no bajan (~76 MB/frame); había otra carga en el PC. Queda apagado |
+
+`NX_UPLOAD_STATS=1` (`runs/diag1`): vértices 96.297 copias y 28,8 GB en la ventana, 1 % iguales; índices 326 MB (100 %
+iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
+
 ## Falta ⚠️
 
-1. Rendimiento: 86 MB subidos por frame, write-backs de 5 MB/frame (0 % cambiado, 20 ms), ~10 fps en PC en el vuelo.
-2. APK de Android (lanzador con las opciones de P5R) y prueba en un dispositivo.
-3. Fusionar los arreglos de P5R de `GUIA_ARQUITECTURA_PORTS_ANDROID.md` (Xclipse BC, Mali R11G11B10F, Adreno 8xx,
-   Android 10, mods sin mayúsculas, L3/R3, SixAxis, mando Xbox, exportar logs) cuando estén confirmados en `p5r-main`.
+1. **Probar el APK en un dispositivo** (`private/nier/apk/nier.apk`). Copiar a `NieR Automata/` en el teléfono:
+   `analysis/` (main.bin, sdk.bin, main.npdm), `extract/romfs/` (11,6 GB) y `spirv/` (todo de `private/nier`).
+2. Rendimiento: qué vértices cambian cada frame (¿nubes/partículas escritas por la CPU, anillos dinámicos?), por qué
+   la GPU tarda 36 ms en una RTX 4060 y por qué los write-backs (0 % cambiado) cuestan 20 ms (lectura de memoria no
+   cacheada en PC). Medir en la tablet.
+3. Películas: en PC salen verdes/negras (sin VP9); comprobar en Android (`AMediaCodec`).
 4. Preparación de datos en el teléfono sin PC (como P5R v0.4): extractor de shaders DAT en C++.
+5. 60 fps: NieR no tiene parche de fps (el lanzador la marca experimental).
+6. Persona Q/Q2 los actualiza otra sesión (v0.3.3, 2026-10-31). P4G/P4AU: pendiente aplicarles lo de la guía.
