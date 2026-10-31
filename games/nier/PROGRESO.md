@@ -148,4 +148,7 @@ iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
 3. Películas: en PC salen verdes/negras (sin VP9); comprobar en Android (`AMediaCodec`).
 4. Preparación de datos en el teléfono sin PC (como P5R v0.4): extractor de shaders DAT en C++.
 5. 60 fps: NieR no tiene parche de fps (el lanzador la marca experimental).
-6. Persona Q/Q2 los actualiza otra sesión (v0.3.3, 2026-10-31). P4G/P4AU: pendiente aplicarles lo de la guía.
+6. Otros ports y la guía de P5R: **P4G** ya la tenía (v0.2.0, `7c3fcdc`, otra sesión). **P4AU**: arreglos de runtime
+   traídos en esta sesión (`c355cbb`, ver su PROGRESO; faltan mods/`hle_fs.cpp` y las opciones del lanzador).
+   **Persona Q/Q2** (3DS, runtime zakuro) los actualiza otra sesión (v0.3.3, 2026-10-31): no tocados.
+7. `p5r-main` tiene el fallo de compilación de Android (`switch` perdido) sin arreglar.
