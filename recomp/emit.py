@@ -44,6 +44,24 @@ class Unhandled(Exception):
     pass
 
 
+# Instructions with an effect outside the registers: a loop containing one is not a pure polling loop.
+SIDE_EFFECT = re.compile(r"^(st|bl|br|svc|brk|hlt|udf|msr|dc|ic|sys|tlbi|hvc|smc)")
+LOOP_BRANCH = re.compile(r"^(b|b\..*|cbn?z|tbn?z)$")
+
+
+def gp_number(name):
+    """General register number of a capstone register name (x9/w9 -> 9, sp -> 31), None for the others."""
+    if name in ("sp", "wsp"):
+        return 31
+    if name == "fp":
+        return 29
+    if name == "lr":
+        return 30
+    if name and name[0] in "xw" and name[1:].isdigit():
+        return int(name[1:])
+    return None
+
+
 def subst(expr, **vals):
     """Replace the whole-word placeholders a / b / o in an expression template."""
     return re.sub(r"\b([abo])\b", lambda m: vals.get(m.group(1), m.group(1)), expr)
@@ -132,6 +150,7 @@ class Emitter(ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps):
         self.trace_sp = {int(x, 16) for x in os.environ.get("NX_TRACE_SP", "").split(",") if x}
         self.unhandled = collections.Counter()
         self.handled = 0
+        self.polls = collections.Counter()
 
     # ---- helpers ------------------------------------------------------------------------------------------
 
@@ -222,6 +241,59 @@ class Emitter(ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps):
 
     # ---- function ---------------------------------------------------------------------------------------
 
+    def gp_access(self, i):
+        """(read, written) general register numbers of instruction i; writeback bases count as written."""
+        rd, wr = [], []
+        try:
+            r, w = i.regs_access()
+            rd += [i.reg_name(x) for x in r]
+            wr += [i.reg_name(x) for x in w]
+        except capstone.CsError:
+            pass
+        for o in i.operands:
+            if o.type == A.ARM64_OP_REG:
+                (wr if o.access & capstone.CS_AC_WRITE else rd).append(i.reg_name(o.reg))
+            elif o.type == A.ARM64_OP_MEM:
+                rd += [i.reg_name(x) for x in (o.mem.base, o.mem.index) if x]
+                if i.writeback and o.mem.base:
+                    wr.append(i.reg_name(o.mem.base))
+        num = lambda names: {n for n in map(gp_number, names) if n is not None}
+        return num(rd), num(wr)
+
+    def poll_loads(self, f, insns):
+        """{address: "ld_poll" | "ld_vol"} for the loads that poll memory: in a loop (a backward branch's range)
+        with no store, call or other side effect, reading an address no instruction of the loop changes. As plain
+        loads the C++ compiler may hoist them out of the loop and, the loop having no side effect, delete it
+        (forward-progress rule): a spin-wait on another thread vanishes and the code goes on to read what that
+        thread has not published yet (NieR's command ring, main+cab968, read half-built commands that way on
+        Android). Pure waits (no register carried from one iteration to the next) get ld_poll, which also orders
+        the loads after the wait; loops with a counter (searches bounded by a field) only need ld_vol."""
+        out = {}
+        for a, i in insns.items():
+            if i is None or not LOOP_BRANCH.match(i.mnemonic) or i.operands[-1].type != A.ARM64_OP_IMM:
+                continue
+            t = i.operands[-1].imm
+            if not f.start <= t <= a:
+                continue
+            body = [insns[x] for x in range(t, a + 4, 4)]
+            if any(x is None or SIDE_EFFECT.match(x.mnemonic) or self.LSE.match(x.mnemonic) for x in body):
+                continue
+            acc = [self.gp_access(x) for x in body]
+            written = set().union(*(w for _, w in acc))
+            defined, carried = set(), False
+            for rd, wr in acc:
+                carried |= bool((rd - defined) & written)
+                defined |= wr
+            kind = "ld_vol" if carried else "ld_poll"
+            for x in body:
+                mem = next((o for o in x.operands if o.type == A.ARM64_OP_MEM), None)
+                if not x.mnemonic.startswith("ld") or mem is None:
+                    continue
+                regs = {gp_number(x.reg_name(r)) for r in (mem.mem.base, mem.mem.index) if r}
+                if regs and not regs & written and out.get(x.address) != "ld_poll":
+                    out[x.address] = kind
+        return out
+
     def function(self, f):
         self.labels = set()
         self.setjmp_sites = []
@@ -232,6 +304,7 @@ class Emitter(ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps):
             got = list(self.cs.disasm(code[a - f.start:a - f.start + 4], a))
             insns[a] = got[0] if got else None
         jt = self.an.jump_tables
+        poll = self.poll_loads(f, insns)
         last_term = False
         for a in range(f.start, f.end, 4):
             i = insns[a]
@@ -243,6 +316,9 @@ class Emitter(ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps):
             try:
                 stmt = self.insn(f, i, jt)
                 self.handled += 1
+                if a in poll:
+                    stmt = stmt.replace("nx::ld<", f"nx::{poll[a]}<")
+                    self.polls[poll[a]] += 1
             except Unhandled as e:
                 self.unhandled[i.mnemonic] += 1
                 txt = f"{i.mnemonic} {i.op_str}".replace('"', "'")

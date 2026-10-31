@@ -90,11 +90,12 @@ def main():
 
     with open(os.path.join(args.out, "report.txt"), "w") as out:
         out.write(f"functions {len(funcs)}, handled {e.handled}, unhandled {sum(e.unhandled.values())}\n")
-        out.write(f"jump tables {len(an.jump_tables)}, unresolved br (indirect tail calls) {len(an.unresolved_br)}\n\n")
+        out.write(f"jump tables {len(an.jump_tables)}, unresolved br (indirect tail calls) {len(an.unresolved_br)}\n")
+        out.write(f"polling loads: ld_poll {e.polls['ld_poll']}, ld_vol {e.polls['ld_vol']}\n\n")
         for mn, n in e.unhandled.most_common():
             out.write(f"{n:8} {mn}\n")
-    print(f"done: {len(files)} files, handled {e.handled}, unhandled {sum(e.unhandled.values())} "
-          f"({time.time() - t:.0f}s)")
+    print(f"done: {len(files)} files, handled {e.handled}, unhandled {sum(e.unhandled.values())}, "
+          f"ld_poll {e.polls['ld_poll']}, ld_vol {e.polls['ld_vol']} ({time.time() - t:.0f}s)")
     for mn, n in e.unhandled.most_common(30):
         print(f"  {n:7} {mn}")
 

@@ -115,6 +115,36 @@ NX_INLINE void st(uint64_t a, T v) {
     std::memcpy(reinterpret_cast<void*>(a), &v, sizeof(T));
 }
 
+// A load in a guest polling loop (no store or call in the loop, the address never changes: a spin-wait on another
+// thread). Volatile, so the compiler neither hoists it nor deletes the side-effect-free loop, and an acquire fence
+// after it, so the loads that follow (the data the other thread published) are not moved or run before it.
+template <typename T>
+NX_INLINE T ld_poll(uint64_t a) {
+    T v;
+    if constexpr (std::is_integral_v<T>) {
+        v = *reinterpret_cast<const volatile T*>(a);
+    } else {
+        std::memcpy(&v, reinterpret_cast<const void*>(a), sizeof(T));
+        __atomic_signal_fence(__ATOMIC_SEQ_CST);
+    }
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    return v;
+}
+
+// A load of a fixed address in a side-effect-free loop that also counts (a search bounded by a field): volatile
+// only, so it is still read on every iteration, as the guest does.
+template <typename T>
+NX_INLINE T ld_vol(uint64_t a) {
+    T v;
+    if constexpr (std::is_integral_v<T>) {
+        v = *reinterpret_cast<const volatile T*>(a);
+    } else {
+        std::memcpy(&v, reinterpret_cast<const void*>(a), sizeof(T));
+        __atomic_signal_fence(__ATOMIC_SEQ_CST);
+    }
+    return v;
+}
+
 template <typename T>
 NX_INLINE T ld_acq(uint64_t a) {
     return __atomic_load_n(reinterpret_cast<T*>(a), __ATOMIC_ACQUIRE);

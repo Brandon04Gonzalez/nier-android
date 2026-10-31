@@ -121,6 +121,34 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
     sale por AAudio y los vídeos usan el decodificador VP9 del sistema (`c2.goldfish.vp9.decoder`); con el recorte de
     vértices también arranca sin errores.
 
+### Sesión 2 (2026-10-31, primera prueba en la tablet)
+
+Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), APK v0.1.0 del 31/10 08:56.
+
+15. **Caída al empezar Nueva partida y tras ~4 diálogos de la partida cargada** (las dos iguales: SIGSEGV en el hilo
+    `g70`, `main_00C82610`, `ldr x8, [x8, #0x10]` con la vtable nula o basura, `lr main+c82674`). Es la cola-anillo de
+    comandos del juego (productor `main+cab840`/`cab944`, consumidor `main+cab968`/`cab9c4`; cola en `obj+0x228`: +0
+    búfer, +8 capacidad, +0x10 índice de lectura, +0x14 índice publicado, +0x18 máscara). Tras un marcador de "vuelta
+    al principio" el consumidor espera con `ldr w9, [x1, #0x14]; cmp; b.eq` a que el productor publique; con
+    `nx::ld` (memcpy normal) **clang borraba ese bucle** (regla de progreso de C++: un bucle sin efectos se puede
+    suponer que termina) y el consumidor leía el hueco antes de que el productor lo escribiera. Comprobado en el
+    desensamblado de `libnier.so`. Las barreras (`dmb`, `ldar`/`stlr`, `ldxr`/`stxr`) ya estaban bien traducidas.
+    **Arreglo en el recompilador** (`recomp/emit.py`, `poll_loads`): en un bucle sin escrituras, llamadas ni atómicos
+    que lee una dirección que el bucle no cambia, la carga pasa a `nx::ld_poll` (volátil + barrera acquire) si es una
+    espera pura, o a `nx::ld_vol` (solo volátil) si el bucle además cuenta (búsquedas acotadas por un campo). NieR:
+    `main` 1.359 / 3.488, `sdk` 266 / 1.122 (`report.txt`). Sirve igual para P5R/P4G/P4AU al regenerar.
+    **Probado en la tablet** (APK del 31/10 16:37): 5 min en el título sin caídas, y el usuario cargó la partida y
+    siguió jugando más allá del punto donde se cerraba, sin caídas. La versión de PC con este cambio no está
+    recompilada ni probada todavía. Para la ruta de teclas por adb hace falta `input keyevent --longpress` (a 13 fps
+    el juego no ve una pulsación corta) y en el diálogo de confirmación hay que pulsar DERECHA para elegir "Sí".
+16. **Rendimiento en el menú: ~12 fps** (replay 27 ms, espera de GPU 43 ms). No es solo la GPU: cada frame el runtime
+    espera a la GPU para aplicar 13 write-backs (3,48 MB comparados, **0 % cambiado**, 13,6 ms) porque el frame
+    siguiente lee esa memoria ("deferred write-backs ... applied for a later read 60 (3420 ms)": 57 ms por frame).
+    Eso serializa CPU y GPU. Es el mismo problema de los write-backs del PC (Falta 2), aquí mucho más caro.
+    En juego (después de cargar): ~15 fps, ~10 con los rayos; replay 19–30 ms + espera de GPU 23–30 ms, y ~33 ms por
+    frame esperando write-backs (6–16 por frame, 2,4–3 MB, 0–4 % cambiado). Con los rayos sube el replay (más draws)
+    y los write-backs.
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |
