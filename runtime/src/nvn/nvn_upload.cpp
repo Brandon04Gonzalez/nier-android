@@ -169,7 +169,7 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img, uint64_
     img.uploaded = true;
     if (gpu_profile_on()) gpu_profile_mark(cb, "texture uploads");
     if (!t.memory || !t.storage_size) return;
-    frame_guest_read(reinterpret_cast<const uint8_t*>(t.memory), t.storage_size);  // deferred write-backs first
+    frame_guest_read(reinterpret_cast<const uint8_t*>(t.memory), t.storage_size, kReadTexture);  // deferred write-backs first
     if (std::getenv("NX_TRACE_UPLOADS") && t.storage_size >= (1u << 20)) {
         const uint8_t* m = reinterpret_cast<const uint8_t*>(t.memory);
         size_t nz = 0;

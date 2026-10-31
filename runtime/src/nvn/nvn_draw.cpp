@@ -322,7 +322,7 @@ void dispatch(VkCommandBuffer cb, const Cmd& c) {
     if (!cs) return;
     uint32_t x = uint32_t(c.i[0]), y = uint32_t(c.i[1]), z = uint32_t(c.i[2]);
     const uint8_t* args = c.n == 1 ? guest_bytes(c.a[0]) : nullptr;  // indirect: {x, y, z}
-    if (args) frame_guest_read(args, 12);  // deferred write-backs over the arguments land first (nvn_frames.cpp)
+    if (args) frame_guest_read(args, 12, kReadIndirect);  // deferred write-backs over the arguments land first (nvn_frames.cpp)
     if (c.n == 1 && !args) return;
     // Written by an earlier dispatch of this submit: only the GPU knows them (vkCmdDispatchIndirect, below).
     bool gpu_args = args && !written_separate() && written_overlaps(args, 12);

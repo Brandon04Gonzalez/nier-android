@@ -159,7 +159,23 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     hilos), `6d6a27c9728fe79b` y `d9db47fa2f852c79`. Ahora el traductor usa 128 (cada warp de 32 va en su trozo del
     subgrupo: válido con 32, 64 y 128). Solo cambian esos 14 SPIR-V (los originales en `spirv_sg32_backup`); el
     traductor de NieR se compila aparte (`-p:NxBuildDir=spirv_harness_nier`) para no tocar el de P5R, que es común.
-    **Pendiente de confirmar en la tablet.**
+    **Probado: el mar sigue morado** (el juego se reinició con los 14 SPIR-V nuevos). El cambio se queda (es correcto
+    para la Adreno), pero la causa del morado es otra. Descartados también los 4 compute que escriben imágenes sin
+    formato (`StorageImageWriteWithoutFormat`): no se ejecutan. Siguiente: volcados por pase en la escena del mar
+    (`NX_SNAP_FS` / `NX_SNAP_DRAWS`) para ver en qué pase aparece el morado, comparando con el PC.
+18. **De dónde sale la espera de los write-backs** (`NX_LOG_WB_READS=<n>` y la línea "reads that applied deferred
+    write-backs", nuevos; PC con `NX_PIPELINED=1`, el modo de Android, `runs/wbsite1`): el 100 % es `written bind`.
+    Cada frame un compute enlaza **los mismos 1.920 bytes** (`0x5923C3BD00`) que escribió un compute del frame
+    anterior. Las regiones escritas viven un solo envío, así que la región nueva se copia de la memoria del juego,
+    y para eso hay que aplicar el write-back anterior: la CPU espera a que la GPU acabe **todo** el frame anterior
+    (en PC ~18 ms por frame, 26,6 fps; en la tablet 33–57 ms). Arreglo propuesto: copiar en la GPU desde la región
+    del envío anterior (guardada en un búfer persistente al final de cada envío, porque su trozo del anillo se
+    libera al retirarlo) y rellenar `before` cuando se aplique el write-back anterior; si la CPU escribió esos
+    bytes entre medias, volver a esperar como ahora.
+19. **"Va lento" = cámara lenta**: NieR ata la velocidad del juego a los fps (la versión de Switch, a 30). Por
+    debajo de 30 fps no salta frames: el juego entero va más despacio. A 15 fps en la tablet va a media velocidad.
+    Solo se arregla subiendo los fps (o saltando frames sin dibujarlos). La pista de PC de la iluminación global
+    (mod FAR: 128 volúmenes de luz) no parece aplicar: en Switch no hay ningún compute con 128 grupos.
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 

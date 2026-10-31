@@ -39,11 +39,13 @@
 // every mode.
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -106,6 +108,8 @@ struct Stats {
     // Deferred write-backs: submits deferred, and applied because of a later replay's read (0), a game wait (1), the
     // slot's retirement (2); with the time spent waiting for their fences and copying.
     uint64_t deferred = 0, applied[3] = {}, applied_ns[3] = {};
+    // The later reads that applied some, by call site (GuestRead), and the time they took.
+    uint64_t read_site[kReadSites] = {}, read_site_ns[kReadSites] = {};
 } g_stats;
 
 // The guest ranges of the deferred write-backs and their slot's serial (under the GPU lock), and how many slots have
@@ -650,6 +654,19 @@ void frame_log(uint64_t frames) {
             (unsigned long long)t.deferred, (unsigned long long)t.applied[0], double(t.applied_ns[0]) / 1e6,
             (unsigned long long)t.applied[1], double(t.applied_ns[1]) / 1e6, (unsigned long long)t.applied[2],
             double(t.applied_ns[2]) / 1e6);
+    if (t.applied[0]) {
+        static const char* const kSite[kReadSites] = {"other", "cache", "dedup", "indirect", "texture", "written bind",
+                                                      "written", "vertex"};
+        std::string by;
+        for (int k = 0; k < kReadSites; k++)
+            if (t.read_site[k]) {
+                char b[96];
+                std::snprintf(b, sizeof b, " %s %llu (%.1f ms)", kSite[k], (unsigned long long)t.read_site[k],
+                              double(t.read_site_ns[k]) / 1e6);
+                by += b;
+            }
+        log("nvn/vk: reads that applied deferred write-backs:%s", by.c_str());
+    }
     g_stats = {};
 }
 
@@ -710,13 +727,26 @@ uint64_t gpu_write_back_serial() {
     return async_gpu() ? g_barrier.load() : 0;
 }
 
-void frame_guest_read(const uint8_t* p, uint64_t size) {
+void frame_guest_read(const uint8_t* p, uint64_t size, int site) {
     if (!g_deferred_slots.load(std::memory_order_relaxed) || !p || !size) return;
     if (p >= g_deferred_hi || p + size <= g_deferred_lo) return;
     uint64_t need = 0;
+    const DeferredRange* hit = nullptr;
     for (const DeferredRange& r : g_deferred)
-        if (r.lo < p + size && r.hi > p) need = std::max(need, r.serial);
-    if (need) apply_deferred_through(need, 0);
+        if (r.lo < p + size && r.hi > p && r.serial >= need) need = r.serial, hit = &r;
+    if (!need) return;
+    // NX_LOG_WB_READS=<n>: the first n reads that wait, with the write-back they overlap.
+    static int log_left = env_int("NX_LOG_WB_READS");
+    if (log_left > 0) {
+        log_left--;
+        log("nvn: wb read: site %d, %p +%llu overlaps write-back %p +%llu (serial %llu, %llu submitted, %llu done)",
+            site, (const void*)p, (unsigned long long)size, (const void*)hit->lo,
+            (unsigned long long)(hit->hi - hit->lo), (unsigned long long)need, (unsigned long long)g_submitted.load(),
+            (unsigned long long)g_completed);
+    }
+    const uint64_t t0 = plat::monotonic_ns();
+    apply_deferred_through(need, 0);
+    if (site >= 0 && site < kReadSites) g_stats.read_site[site]++, g_stats.read_site_ns[site] += plat::monotonic_ns() - t0;
 }
 
 bool gpu_wait(uint64_t serial) {

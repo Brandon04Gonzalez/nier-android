@@ -140,7 +140,7 @@ Upload written_bind(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_
     r.size = n;
     r.cap = std::max(n + kTail, off + padded);
     r.up = alloc_anchored(r.cap, off);
-    frame_guest_read(lo, n);  // deferred write-backs over these bytes land first (nvn_frames.cpp)
+    frame_guest_read(lo, n, kReadWrittenBind);  // deferred write-backs over these bytes land first (nvn_frames.cpp)
     std::memcpy(r.up.ptr, lo, n);
     std::memset(r.up.ptr + n, 0, r.cap - n);
     r.before = std::make_shared<std::vector<uint8_t>>(r.up.ptr, r.up.ptr + n);
@@ -170,7 +170,7 @@ bool written_read(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_t 
     // what the range holds at this point of the submit (later dispatches do not change it).
     draw_end_rendering(cb, 2);
     out = upload_alloc(std::max(padded, size), std::max<uint64_t>(align, 16));
-    frame_guest_read(p, size);
+    frame_guest_read(p, size, kReadWritten);
     std::memcpy(out.ptr, p, size);
     if (padded > size) std::memset(out.ptr + size, 0, padded - size);
     copy_regions(cb, regions, p, size, out);
@@ -271,7 +271,7 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
                 u.offset -= from, u.ptr -= from;
             } else {  // too near the ring's start to bind at offset - from: a copy of [0, end) with only the fetched part
                 u = upload_alloc((end + 15) & ~15ull, 16);
-                frame_guest_read(p + from, end - from);
+                frame_guest_read(p + from, end - from, kReadVertex);
                 std::memcpy(u.ptr + from, p + from, end - from);
             }
             in.vertex[s] = u;

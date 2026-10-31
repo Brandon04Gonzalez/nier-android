@@ -236,7 +236,7 @@ bool cache_upload(const uint8_t* p, uint64_t size, uint64_t padded, uint64_t ali
     g_seen.erase(p);
     g_used += class_bytes(c);
     uint8_t* dst = g_blocks[slot.block].ptr + slot.offset;
-    frame_guest_read(p, size);
+    frame_guest_read(p, size, kReadCache);
     std::memcpy(dst, p, size);
     if (padded > size) std::memset(dst + size, 0, padded - size);
     g_entries[p] = {size, padded, h, slot.block, slot.offset, c, serial, g_submits};

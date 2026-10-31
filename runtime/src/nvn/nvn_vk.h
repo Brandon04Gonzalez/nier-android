@@ -138,8 +138,11 @@ struct WriteBack {
 };
 void apply_write_back(const WriteBack& w);  // nvn_written.cpp
 // Deferred write-backs (nvn_frames.cpp): those of earlier submits over [p, p + size) are applied first. Every
-// read of guest memory for the GPU calls it (uploads, compute bindings, texture uploads).
-void frame_guest_read(const uint8_t* p, uint64_t size);
+// read of guest memory for the GPU calls it (uploads, compute bindings, texture uploads). `site` (GuestRead) says
+// which, for the log: which reads make the replay wait for the GPU.
+enum GuestRead { kReadOther, kReadCache, kReadDedup, kReadIndirect, kReadTexture, kReadWrittenBind, kReadWritten,
+                 kReadVertex, kReadSites };
+void frame_guest_read(const uint8_t* p, uint64_t size, int site = kReadOther);
 void write_back_log(uint64_t frames);       // nvn_written.cpp: their volume and time per frame
 std::vector<WriteBack> draw_take_write_backs();  // nvn_draw.cpp: this submit's, for an asynchronous submit
 std::vector<WriteBack> draw_take_late_write_backs();  // nvn_draw.cpp: its linear render targets', never waited for
