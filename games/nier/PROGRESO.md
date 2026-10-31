@@ -117,7 +117,9 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
     `C:\Users\brand\nier-port\emu_run.sh <nombre> <s> <cada>`, capturas en `nier-port\emu_runs`): datos copiados a
     `/sdcard/NieR Automata` (analysis, spirv, extract/romfs), APK x86_64 instalado, `appops ... MANAGE_EXTERNAL_STORAGE
     allow`. El lanzador ve los datos; el juego arranca y llega a la pantalla NEW GAME (en inglés: el idioma del emulador).
-    Enter = A y las flechas = cruceta sirven para manejarlo con `adb shell input keyevent`.
+    Enter = A y las flechas = cruceta sirven para manejarlo con `adb shell input keyevent`. En el emulador el sonido
+    sale por AAudio y los vídeos usan el decodificador VP9 del sistema (`c2.goldfish.vp9.decoder`); con el recorte de
+    vértices también arranca sin errores.
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
