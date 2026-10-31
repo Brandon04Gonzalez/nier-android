@@ -128,6 +128,12 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
 | **`NX_HANDHELD=1` (720p, lo que usa Android por defecto)** | **16,5** (20 al final) | write-backs a la mitad (2,35 MB, 9 ms): dependen de la resolución (búferes de cómputo del tamaño de la pantalla); replay 13 ms, GPU 22 ms |
 | `NX_DEFER_WRITE_BACKS=0` | 11,1 | +13 % con una sola muestra (14 write-backs/frame, 1 % cambiado): repetir antes de cambiar el valor por defecto |
 | Emulador Android x86_64 (menú, 720p) | ~9,5 | replay 60 ms (CPU del emulador); no representa un móvil ARM |
+| 720p, A/B repetido: `NX_DEFER_WRITE_BACKS=0` / por defecto | 16,9 / 16,8 | sin diferencia: se queda como está |
+
+`NX_LOG_BIG_VERTEX=<bytes>` (nuevo, `runs/bigv`): los flujos grandes son vértices de efectos que la CPU reescribe cada
+frame (mismo búfer `0x1145254a0`, 1,2–3,3 MB, stride 28, tamaño creciente) en draws cuyo número de vértices el runtime
+no conoce (rango "unknown": probablemente indirectos), así que la copia es necesaria. Lo siguiente: sumar bytes por
+dirección para ver qué más llega a ~65 MB/frame.
 
 `NX_UPLOAD_STATS=1` (`runs/diag1`): vértices 96.297 copias y 28,8 GB en la ventana, 1 % iguales; índices 326 MB (100 %
 iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.

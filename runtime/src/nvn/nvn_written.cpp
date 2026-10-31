@@ -251,6 +251,18 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
             }
             from &= ~uint64_t(255);  // the attributes keep their alignment
         }
+        static const uint64_t big = std::getenv("NX_LOG_BIG_VERTEX") ? std::strtoull(std::getenv("NX_LOG_BIG_VERTEX"), nullptr, 10) : 0;
+        if (big && size >= big) {  // diagnosis: the large vertex ranges, what the draw fetches of them, GPU-written or not
+            static int logged = 0;
+            uint64_t l = 0, h = 0, il = 0, ih = 0;
+            bool known = fetched_range(indexed, c, l, h, il, ih);
+            uint32_t stride = s < g_state.streams.size() ? g_state.streams[s].stride : 0;
+            if (logged++ < 60)
+                log("nvn: big vertex stream %u at %llx: %llu bytes, stride %u, vertices %llu..%llu%s, %s, vs %s", s,
+                    (unsigned long long)r.address, (unsigned long long)size, stride, (unsigned long long)l,
+                    (unsigned long long)h, known ? "" : " (unknown)", written_overlaps(p, size) ? "GPU-written" : "CPU",
+                    vs->hash.c_str());
+        }
         if (ranged && from < end && end <= size && (from > 0 || end + 4096 < size) && !written_overlaps(p, size)) {
             Upload u = dedup_upload(p + from, end - from, (end - from + 15) & ~15ull, 16);
             if (u.offset >= from) {
