@@ -7,8 +7,9 @@
 En PC arranca, pasa la pantalla de sistema YoRHa, el título, Nueva partida (ranura, nombre, dificultad) y **juega el
 prólogo en 3D** (unidades de vuelo sobre las nubes, 2B/12H, rayos) con la imagen correcta. Rendimiento en PC todavía
 bajo en el prólogo (~10 fps en una RTX 4060: ~80 MB de vértices subidos por frame y 20 ms de write-backs). Android:
-lanzador con las opciones de P5R v0.5.0 + mods y APK arm64; **todavía sin probar en un dispositivo** (la tablet no
-estaba conectada y la usa la sesión de P5R).
+lanzador con las opciones de P5R v0.5.0 + mods; APK arm64 (`private/nier/apk_arm64/nier.apk`) y x86_64. **En el
+emulador Android (x86_64) funciona**: lanzador ("Data ready"), arranque YoRHa con los controles táctiles, título y
+pantalla de Nueva partida (~9,5 fps en el emulador). Falta probarlo en un teléfono/tablet ARM real.
 
 ## Cómo funciona el port
 
@@ -106,7 +107,16 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
     R11G11B10F a RGBA16F, Adreno 8xx sin trocear envíos, Android 10, mods sin distinguir mayúsculas, L3/R3,
     sensibilidad, SixAxis, mando Xbox, exportar logs). Sin conflictos; NieR sigue arrancando en PC.
 11. Controles táctiles: NieR usa la tabla de P5R (`touch_layout.cpp`, ahora con L3/R3).
-12. `android/build_apk.ps1` de la rama `p4g` (opción `-Abis`, para compilar también x86_64 para el emulador).
+12. `android/build_apk.ps1` de la rama `p4g` (opción `-Abis`, para compilar también x86_64 para el emulador), y las
+    banderas de CMake y el manejador de muestreo de `platform_android.cpp` para x86_64 (también de `p4g`).
+13. **Arreglo de compilación Android**: la v0.5.0 de P5R (commit `254b1a0` de `p5r-main`) perdió un `switch (k) {` en
+    `platform_android_input.cpp` al añadir el mapeo Xbox/Nintendo: el APK no compilaba. Arreglado en `nier` (la rama
+    `p4g` ya lo tenía bien). **Ojo: `p5r-main` sigue con el fallo** (no lo toqué: es la zona de la otra sesión).
+14. **Prueba en el emulador** (AVD propio **`NieR_Dev`**, Android 15 x86_64, 32 GB, `emulator-5580`; script
+    `C:\Users\brand\nier-port\emu_run.sh <nombre> <s> <cada>`, capturas en `nier-port\emu_runs`): datos copiados a
+    `/sdcard/NieR Automata` (analysis, spirv, extract/romfs), APK x86_64 instalado, `appops ... MANAGE_EXTERNAL_STORAGE
+    allow`. El lanzador ve los datos; el juego arranca y llega a la pantalla NEW GAME (en inglés: el idioma del emulador).
+    Enter = A y las flechas = cruceta sirven para manejarlo con `adb shell input keyevent`.
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
@@ -115,6 +125,9 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
 | Base | **9,8** | replay 26 ms, espera de GPU 36 ms, write-backs 20,7 ms (6/frame, 5,16 MB comparados, 0 % cambiado), ~79 MB subidos/frame |
 | `NX_BUFFER_CACHE=1` | 9,8 | sin cambio: las subidas son vértices que cambian (1 % igual a la copia anterior) |
 | `NX_VERTEX_TRIM=1` (nuevo: solo el rango de vértices que lee cada draw) | 9,1 | los bytes no bajan (~76 MB/frame); había otra carga en el PC. Queda apagado |
+| **`NX_HANDHELD=1` (720p, lo que usa Android por defecto)** | **16,5** (20 al final) | write-backs a la mitad (2,35 MB, 9 ms): dependen de la resolución (búferes de cómputo del tamaño de la pantalla); replay 13 ms, GPU 22 ms |
+| `NX_DEFER_WRITE_BACKS=0` | 11,1 | +13 % con una sola muestra (14 write-backs/frame, 1 % cambiado): repetir antes de cambiar el valor por defecto |
+| Emulador Android x86_64 (menú, 720p) | ~9,5 | replay 60 ms (CPU del emulador); no representa un móvil ARM |
 
 `NX_UPLOAD_STATS=1` (`runs/diag1`): vértices 96.297 copias y 28,8 GB en la ventana, 1 % iguales; índices 326 MB (100 %
 iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
