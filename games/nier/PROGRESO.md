@@ -6,8 +6,8 @@
 
 En PC arranca, pasa la pantalla de sistema YoRHa, el título, Nueva partida (ranura, nombre, dificultad) y **juega el
 prólogo en 3D** (unidades de vuelo sobre las nubes, 2B/12H, rayos, el tutorial de disparo) con la imagen correcta.
-Rendimiento en PC en el vuelo: 9,8 fps a 1080p → **19 fps a 720p con el recorte de vértices** (las subidas bajaron de
-~70 a 10 MB por frame). Android:
+Rendimiento en PC en el vuelo: 9,8 fps a 1080p, **~17 fps a 720p** (con el recorte de vértices las subidas bajan a la
+mitad, 123 → 63 MB por frame; en PC apenas +2–3 % de fps). Android:
 lanzador con las opciones de P5R v0.5.0 + mods; APK arm64 (`private/nier/apk_arm64/nier.apk`) y x86_64. **En el
 emulador Android (x86_64) funciona**: lanzador ("Data ready"), arranque YoRHa con los controles táctiles, título y
 pantalla de Nueva partida (~9,5 fps en el emulador). Falta probarlo en un teléfono/tablet ARM real.
@@ -132,7 +132,12 @@ Está en `C:\Users\brand\nier-port\bench.sh`.
 | `NX_DEFER_WRITE_BACKS=0` | 11,1 | +13 % con una sola muestra (14 write-backs/frame, 1 % cambiado): repetir antes de cambiar el valor por defecto |
 | Emulador Android x86_64 (menú, 720p) | ~9,5 | replay 60 ms (CPU del emulador); no representa un móvil ARM |
 | 720p, A/B repetido: `NX_DEFER_WRITE_BACKS=0` / por defecto | 16,9 / 16,8 | sin diferencia: se queda como está |
-| **720p + recorte de vértices arreglado (ahora por defecto)** | **19,0** (vs 16,8) | **subidas 69 → 10 MB/frame**; imagen igual a la de referencia (`runs/cmp_trim.png`) |
+| 720p + recorte de vértices arreglado (ahora por defecto), 1.ª medida | 19,0 (vs 16,8) | subidas 69 → 10 MB/frame; imagen igual a la de referencia (`runs/cmp_trim.png`). **Ojo**: esa ejecución llegó a otra escena |
+| **720p, A/B controlado sin partida guardada** (`c_t1` / `c_t0`) | **16,9 / 16,5** | último tramo: 63 vs 123 MB subidos por frame. En PC la ganancia es pequeña (+2–3 %); en el móvil copiar a memoria no cacheada cuesta mucho más |
+| `NX_EXP_NO_WB=1` | 15,9 | no quita estos write-backs: descartado |
+
+> Para medir, borra antes `private/nier/user/save`: con una partida guardada la ruta de teclas carga la partida y
+> empieza en otro punto (las cifras no son comparables). La partida de las pruebas largas está en `user/save_bak_long1`.
 
 **Estabilidad** (`runs/long1`, 10 min a 720p con el recorte, A cada 3 s y R a ratos): carga la partida guardada, vuela,
 dispara sobre el mar, llega a un fin de partida ("Los YoRHa fueron exterminados…", final W, por pulsar al azar), vuelve

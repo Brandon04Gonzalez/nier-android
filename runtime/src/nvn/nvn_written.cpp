@@ -229,7 +229,7 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
     // a frame were copied, 1% of it the same as the last copy). The copy keeps its place in the stream, so the
     // binding (offset - lo) and the vertex numbers do not change. Its effect buffer is bound from the same base with
     // a size that grows draw by draw: each draw copied all of it again (~20 times a frame). In the prologue flight at
-    // 720p: 69 -> 10 MB uploaded a frame, 16.8 -> 19.0 fps on the PC (PROGRESO, session 1). NX_VERTEX_TRIM=0: off.
+    // 720p, controlled A/B: 123 -> 63 MB uploaded a frame, 16.5 -> 16.9 fps on the PC (PROGRESO). NX_VERTEX_TRIM=0: off.
     static const bool trim = !(std::getenv("NX_VERTEX_TRIM") && std::getenv("NX_VERTEX_TRIM")[0] == '0');
     uint64_t lo = 0, hi = 0, inst_lo = 0, inst_hi = 0;
     // From the command, not `indexed`: draw_inputs_shared asks for the vertex streams of an indexed draw with false.
