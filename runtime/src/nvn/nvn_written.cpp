@@ -227,11 +227,13 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
             in.used |= 1u << g_state.attribs[io.location].stream;
     // Only the bytes of the vertices the draw fetches (NieR binds whole vertex pools of several MB per draw: ~80 MB
     // a frame were copied, 1% of it the same as the last copy). The copy keeps its place in the stream, so the
-    // binding (offset - lo) and the vertex numbers do not change. Off by default (NX_VERTEX_TRIM=1: on): in the
-    // prologue flight it changed neither the bytes uploaded (~76 MB a frame) nor the fps (PROGRESO, session 1).
-    static const bool trim = std::getenv("NX_VERTEX_TRIM") && std::getenv("NX_VERTEX_TRIM")[0] == '1';
+    // binding (offset - lo) and the vertex numbers do not change. Its effect buffer is bound from the same base with
+    // a size that grows draw by draw: each draw copied all of it again (~20 times a frame). In the prologue flight at
+    // 720p: 69 -> 10 MB uploaded a frame, 16.8 -> 19.0 fps on the PC (PROGRESO, session 1). NX_VERTEX_TRIM=0: off.
+    static const bool trim = !(std::getenv("NX_VERTEX_TRIM") && std::getenv("NX_VERTEX_TRIM")[0] == '0');
     uint64_t lo = 0, hi = 0, inst_lo = 0, inst_hi = 0;
-    const bool ranged = trim && fetched_range(indexed, c, lo, hi, inst_lo, inst_hi);
+    // From the command, not `indexed`: draw_inputs_shared asks for the vertex streams of an indexed draw with false.
+    const bool ranged = trim && fetched_range(c.op == Cmd::DrawElements, c, lo, hi, inst_lo, inst_hi);
     for (uint32_t s = 0; s < 15; s++) {
         if (!(in.used >> s & 1)) continue;
         const Range& r = g_state.vertex_buffers[s];
@@ -255,7 +257,7 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
         if (big && size >= big) {  // diagnosis: the large vertex ranges, what the draw fetches of them, GPU-written or not
             static int logged = 0;
             uint64_t l = 0, h = 0, il = 0, ih = 0;
-            bool known = fetched_range(indexed, c, l, h, il, ih);
+            bool known = fetched_range(c.op == Cmd::DrawElements, c, l, h, il, ih);
             uint32_t stride = s < g_state.streams.size() ? g_state.streams[s].stride : 0;
             if (logged++ < 60)
                 log("nvn: big vertex stream %u at %llx: %llu bytes, stride %u, vertices %llu..%llu%s, %s, vs %s", s,

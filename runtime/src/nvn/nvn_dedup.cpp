@@ -4,12 +4,14 @@
 // inline uniform updates (UpdateUniformBuffer, which invalidates what it overlaps) and compute results (ranges a
 // dispatch writes are read from their written copy, nvn_written.cpp, and invalidated here): a copy made once can
 // serve every later draw of the submit that binds the same bytes.
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <unordered_map>
+#include <vector>
 
 #include "nvn_draw_state.h"
 
@@ -47,6 +49,10 @@ struct KindStats {
 };
 KindStats g_kind[kUploadKinds];
 std::unordered_map<const uint8_t*, std::pair<uint64_t, uint64_t>> g_last_hash;  // address -> (size, hash)
+struct VertexSource {
+    uint64_t bytes = 0, copies = 0, size = 0;
+};
+std::unordered_map<const uint8_t*, VertexSource> g_vertex_by_addr;
 
 bool upload_stats_on() {
     static const bool on = std::getenv("NX_UPLOAD_STATS") != nullptr;
@@ -60,6 +66,10 @@ void count_copy(const uint8_t* p, uint64_t size) {
     auto& last = g_last_hash[p];
     if (last.first == size && last.second == h) k.same += size;
     last = {size, h};
+    if (g_upload_kind == kUploadVertex) {  // which vertex buffers the bytes come from (top list in dedup_log)
+        auto& v = g_vertex_by_addr[p];
+        v.bytes += size, v.copies++, v.size = size;
+    }
 }
 
 }  // namespace
@@ -152,6 +162,16 @@ void dedup_log() {
             log("nvn: uploads of %s: %llu copies, %.1f MB, %.0f%% the same as their last copy", names[k],
                 (unsigned long long)s.copies, double(s.bytes) / 1e6, 100.0 * double(s.same) / double(s.bytes));
         s = {};
+    }
+    if (!g_vertex_by_addr.empty()) {
+        std::vector<std::pair<const uint8_t*, VertexSource>> top(g_vertex_by_addr.begin(), g_vertex_by_addr.end());
+        std::sort(top.begin(), top.end(), [](const auto& x, const auto& y) { return x.second.bytes > y.second.bytes; });
+        for (size_t k = 0; k < top.size() && k < 8; k++)
+            log("nvn: vertex source #%zu at %llx: %.1f MB in %llu copies (last %llu bytes)", k,
+                (unsigned long long)uintptr_t(top[k].first), double(top[k].second.bytes) / 1e6,
+                (unsigned long long)top[k].second.copies, (unsigned long long)top[k].second.size);
+        log("nvn: vertex sources: %zu addresses", top.size());
+        g_vertex_by_addr.clear();
     }
 }
 
