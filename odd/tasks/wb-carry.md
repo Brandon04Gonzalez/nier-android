@@ -36,7 +36,7 @@ on the binding alone only moved the wait to the indirect arguments (PROGRESO 22)
       one coherent change in nvn_written.cpp / nvn_frames.cpp / nvn_vk.cpp / nvn_vk.h)
 - [x] T2 `written_adopt` hooked into `written_bind`, `written_read` and indirect dispatch arguments
 - [x] T3 PC verification: fps vs baseline (26.6 fps `runs/wbsite1`), log line, frame comparison, no crash; commit
-- [x] T4 Android build; tablet test: the user played it (\"un poquitico de fps, más fluido\"); the tablet is GPU-bound
+- [x] T4 Android build; tablet test: the user played it ("un poquitico de fps, más fluido"); the tablet is GPU-bound
       now (PROGRESO 26: ~41 ms of GPU a frame even in the load menu)
 
 ## Acceptance criteria
