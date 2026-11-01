@@ -191,6 +191,12 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     `NX_PIPELINED`), y el umbral es el contador global de draws (~2,2 M en el mar a los 270 s de `bench.sh`). Sospechas:
     las sondas de luz de la GI (el búfer de 1.920 bytes de la espera de write-backs encaja con 40 sondas SH L1) o una
     textura del material que no se sube. Tampoco miradas aún las zonas negro/blanco de más adelante.
+    Descartado (PC, `runs/shipdump`, `audit1`, `rtup1`): texturas reescritas por la CPU sin avisar (`NX_TEX_AUDIT=2`
+    solo ve cambiar una ASTC de 2048²) y la regla de limpiar los destinos comprimibles nunca escritos
+    (`NX_RT_UPLOAD=1`: igual de negras). `dump_fs` de `66b7c1c862052729`: lee una 4x4 blanca, una 32x32 gris y una
+    8x8 de 4 mips **negra** (`58416af2d0`, memoria `58c001bc00`, RGBA8, sin flag de destino, cargada de los datos al
+    principio): puede ser negra de verdad. Siguiente paso: instantáneas en modo síncrono alrededor del draw 2,2 M para
+    saber qué draw es la nave, y mirar su shader (¿las sondas SH del búfer de 1.920 bytes?).
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
