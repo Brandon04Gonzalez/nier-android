@@ -53,7 +53,7 @@ on the binding alone only moved the wait to the indirect arguments (PROGRESO 22)
 - Evidence (PC, Android mode, same build, `bench.sh` 285 s): `NX_WB_CARRY=0` 26.6 fps with "written bind 60
   (1208 ms)" waits every 60 frames; carry on **53.0 fps**, no deferred write-back waits at all, 4474/4837 and 2100/2100
   ranges adopted, 0 refused for CPU writes, 0 arena-full, 0 crashes; frames (`runs/carry_cmp.png`) render clouds, sea,
-  explosions, lasers and GPU particles normally.
+  explosions, lasers and GPU particles normally. Commit: `5a644f2`.
 
 ## Delivery
 Local branch `nier`, work-unit commits; no push. Strategy: single local branch (no PR).
