@@ -301,7 +301,15 @@ bool written_read(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_t 
     // what the range holds at this point of the submit (later dispatches do not change it).
     draw_end_rendering(cb, 2);
     out = upload_alloc(std::max(padded, size), std::max<uint64_t>(align, 16));
-    frame_guest_read(p, size, kReadWritten);
+    // Only the bytes no region covers come from the guest: deferred write-backs over the rest need not land first
+    // (their region copies replace them below). NieR's particle buffers: a wait for the last frame's GPU on every
+    // composed read, ~29 ms a frame on the Adreno 610 in flight (PROGRESO 28).
+    const uint8_t* gap = p;
+    for (It it : regions) {
+        if (it->first > gap) frame_guest_read(gap, uint64_t(it->first - gap), kReadWritten);
+        gap = std::max(gap, it->first + it->second.size);
+    }
+    if (gap < p + size) frame_guest_read(gap, uint64_t(p + size - gap), kReadWritten);
     std::memcpy(out.ptr, p, size);
     if (padded > size) std::memset(out.ptr + size, 0, padded - size);
     copy_regions(cb, regions, p, size, out);

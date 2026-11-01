@@ -290,6 +290,20 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
       mínimo del motor solo quita un 32 % de píxeles al 3D. Además, `reads that applied deferred write-backs:
       written 60 (1722 ms)` por 60 frames (~29 ms/frame de espera en el replay) y 23 write-backs/frame (11,6 ms).
 
+28. **Espera "written" eliminada** (`nvn_written.cpp`, `written_read`). Una lectura de un rango en parte escrito por la
+    GPU en este envío (los búferes de partículas de NieR) esperaba a que llegaran los write-backs diferidos del frame
+    anterior sobre **todo** el rango, aunque las partes que cubre una región se sustituyen después por su copia de GPU.
+    Ahora solo esperan los huecos que ninguna región cubre. Tablet en vuelo (`tab_runs/playG` contra `playA`): replay
+    27,7 → 16,4 ms, espera de fence 17 → 0,1 ms, la línea "reads that applied…" ya no sale (PC tampoco). Los fps no
+    suben (14–15): el vuelo está limitado solo por la GPU. **Perfil de GPU en vuelo** (`tab_runs/playP`, 54 ms/frame):
+    | ms | pase |
+    |---|---|
+    | 14,1 | 1280x720 `fs 1abb730d92165df3` (73 draws, 16,5k vértices): escena principal |
+    | 11,7 | 1280x720 `fs f69e0c3893bfa4fa` (65 draws, 325k vértices): solo profundidad (el fs de las sombras) |
+    | 8,0 | 1280x720 `fs 2ac0161dd586fd88` (5 draws, 1,3k vértices): pantalla completa (¿mar/niebla?) |
+    | 7,0 | mapa de sombras 2048x2048 (92 draws, 193k vértices); "Sombras: desactivadas" del lanzador lo quita |
+    | 3,4 | compute `a686f64415f6841a` |
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |
