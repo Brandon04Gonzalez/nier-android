@@ -246,6 +246,25 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     (~13 ms/frame en PC) desde que `CopyBufferToBuffer`/`ClearBuffer` tocan regiones (camino compuesto de
     `written_read`, que lee toda la memoria): candidata a optimizar.
 
+26. **Cuello de botella de GPU en la tablet (Adreno 610, 720p): medido.** `NX_GPU_PROFILE=1` en `config.txt`, tres
+    corridas (`nier-port/tab_runs/gprof1..3`, build `929f01f`). La ruta automática no pasó del diálogo "¿Cargar este
+    archivo?" (a 13 fps la IZQUIERDA no entra ni con 1 s; `tab_sea2.sh`), así que el perfil es del **menú de carga**,
+    que solo muestra interfaz y aun así gasta **40,8–41,7 ms de GPU por frame** (13,4 fps; la CPU replay ~11 ms, el
+    resto es esperar a la GPU). Coincide con la primera queja ("el menú va a 13 fps y no es pesado"). Por pase y frame:
+    | ms | pase | qué parece |
+    |---|---|---|
+    | 8,6 | 1280x720 `fs f1f497acfa4a9eb3`, 11 draws, ~1-3k vértices | fondo/niebla a pantalla completa con shader caro |
+    | 5,3–6,1 | 1280x720 `fs 2ed85e54c3061599`, 65–87 draws, 44 pipelines | la interfaz |
+    | 4,7 | compute `a686f64415f6841a` | ¿histograma/luminancia o sondas? |
+    | 3,7 / 2,5 / 1,8 / 0,9 | 1280x720 `f5a50e…`, `8bdcc1…`, `86698c…`, `089e6f…` (1–2 draws cada uno) | cadena de posproceso a pantalla completa |
+    | 1,0 / 0,8 / 0,5 | 800x450, 400x225, 640x360 | bloom/desenfoque por niveles |
+    | 1,9 / 1,5 | copias de texturas (3/frame) / fuera de pases (48 limpiezas/subidas por frame) | |
+    Casi todo es trabajo por píxel a 1280x720: la palanca grande es la resolución interna (el lanzador ya ofrece 480p
+    = 44 % de los píxeles; comprobar que `NX_RENDER_RES` baja de verdad los destinos del juego y no solo la ventana).
+    Siguientes candidatos: identificar `f1f497…` y el compute `a686f6…` (¿se pueden saltar en menús o a calidad baja?),
+    y reducir los pases de posproceso a media resolución con `GRAPHICS=low`. En juego (log del usuario
+    `tab_runs/user_carry`): ~16-17 fps con ~15 ms de espera en `present` (también limitado por GPU).
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |
