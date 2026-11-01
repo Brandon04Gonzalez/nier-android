@@ -319,6 +319,8 @@ struct Cmd {
         CopyBufferToTexture, ClearTexture,  // nvn_copy.cpp (P5R's texture loads and clears)
         ResetCounter, RenderConditional,  // P5R's occlusion culling (nvn_occlusion.cpp)
         SetPrimitiveRestart,  // n: enabled, a[0]: the restart index (nvn_state.cpp)
+        DrawElementsIndirect, DrawArraysIndirect,  // a[1]: the {count, instances, first, ...} record (nvn_state.cpp)
+        ClearBuffer, CopyBufferToBuffer, ReportValue,  // GPU-side buffer writes in command order (nvn_state.cpp)
     } op;
     uint32_t n = 0, mask = 0;
     uint64_t a[9] = {};  // textures (render targets: colors then depth), handles, GPU addresses, sizes, ...

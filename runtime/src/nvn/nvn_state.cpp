@@ -389,6 +389,43 @@ void hle_chain_once(CPU& c, const char* what) {
 namespace {
 
 void DrawElements(CPU& c) { draw_elements(c, 0, 0, 1); }
+
+// DrawElementsIndirect(cmd, mode, NVNindexType, NVNbufferAddress indices, NVNbufferAddress record) and
+// DrawArraysIndirect(cmd, mode, NVNbufferAddress record): the counts in a record the GPU reads when it gets there
+// ({count, instances, first index, base vertex, base instance} / {count, instances, first, base instance}). NieR
+// draws its models' colour pass this way (GPU-culled lists): unimplemented, they came out as black silhouettes (only
+// their depth pre-pass was drawn). The replay turns them into plain draws (nvn_draw_state.cpp).
+void DrawElementsIndirect(CPU& c) {
+    g_recorded_draws++;
+    Cmd cmd{Cmd::DrawElementsIndirect};
+    cmd.n = uint32_t(c.x[1]), cmd.mask = uint32_t(c.x[2]), cmd.a[0] = c.x[3], cmd.a[1] = c.x[4];
+    record(c.x[0], cmd);
+}
+// ClearBuffer(cmd, NVNbufferAddress, size, u32 value), CopyBufferToBuffer(cmd, src, dst, size, flags) and
+// ReportValue(cmd, u32 value, NVNbufferAddress): buffer writes the GPU makes in command order. NieR resets a 4-byte
+// counter with ClearBuffer every frame and copies 60000-byte buffers; unimplemented, neither happened. Replayed in
+// nvn_written.cpp (on the GPU copy when a dispatch wrote the range, else in guest memory).
+void ClearBuffer(CPU& c) {
+    Cmd cmd{Cmd::ClearBuffer};
+    cmd.a[0] = c.x[1], cmd.a[1] = c.x[2], cmd.n = uint32_t(c.x[3]);
+    record(c.x[0], cmd);
+}
+void CopyBufferToBuffer(CPU& c) {
+    Cmd cmd{Cmd::CopyBufferToBuffer};
+    cmd.a[0] = c.x[1], cmd.a[1] = c.x[2], cmd.a[2] = c.x[3];
+    record(c.x[0], cmd);
+}
+void ReportValue(CPU& c) {
+    Cmd cmd{Cmd::ReportValue};
+    cmd.n = uint32_t(c.x[1]), cmd.a[0] = c.x[2];
+    record(c.x[0], cmd);
+}
+void DrawArraysIndirect(CPU& c) {
+    g_recorded_draws++;
+    Cmd cmd{Cmd::DrawArraysIndirect};
+    cmd.n = uint32_t(c.x[1]), cmd.a[1] = c.x[2];
+    record(c.x[0], cmd);
+}
 void DrawElementsBaseVertex(CPU& c) { draw_elements(c, int32_t(c.x[5]), 0, 1); }
 void DrawElementsInstanced(CPU& c) { draw_elements(c, int32_t(c.x[5]), int32_t(c.x[6]), int32_t(c.x[7])); }
 
@@ -454,6 +491,11 @@ NX_HLE("nvnCommandBufferSetDepthRange", SetDepthRange);
 NX_HLE("nvnCommandBufferDrawArrays", DrawArrays);
 NX_HLE("nvnCommandBufferDrawArraysInstanced", DrawArraysInstanced);
 NX_HLE("nvnCommandBufferDrawElements", DrawElements);
+NX_HLE("nvnCommandBufferDrawElementsIndirect", DrawElementsIndirect);
+NX_HLE("nvnCommandBufferDrawArraysIndirect", DrawArraysIndirect);
+NX_HLE("nvnCommandBufferClearBuffer", ClearBuffer);
+NX_HLE("nvnCommandBufferCopyBufferToBuffer", CopyBufferToBuffer);
+NX_HLE("nvnCommandBufferReportValue", ReportValue);
 NX_HLE("nvnCommandBufferDrawElementsBaseVertex", DrawElementsBaseVertex);
 NX_HLE("nvnCommandBufferDrawElementsInstanced", DrawElementsInstanced);
 NX_HLE("nvnCommandBufferBarrier", ignore);

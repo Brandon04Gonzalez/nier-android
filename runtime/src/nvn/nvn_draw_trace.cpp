@@ -413,6 +413,16 @@ void draw_trace_line(const Targets& t, bool indexed, const Cmd& c, const ShaderI
         cond = b;
     }
     verts = cond + verts;
+    std::string more;  // colour targets after the first (a G-buffer's)
+    for (uint32_t k = 1; k < t.color_count && k < 8; k++) {
+        const Texture* tk = t.colors[k] ? get<Texture>(t.colors[k]) : nullptr;
+        char mb[64];
+        std::snprintf(mb, sizeof mb, " +c%u %llx f%x m%x", k, (unsigned long long)t.colors[k], tk ? tk->format : 0,
+                      g_state.mask.mask[k]);
+        more += mb;
+    }
+    if (g_draw_from_indirect) more += " IND";
+    if (!more.empty()) tex = more + " ||" + tex;
     log("td: frame %llu draw %llu tgt %llx %ux%u f%x depth %llx f%x test %u write %u func %u stencil %u offset %u "
         "(%g %g %g) blend %u (%u %u %u %u) eq %u %u mask %x sc %d %d %d %d alpha %u vp %d %d %d %d vs %s fs %s %s %d%s |%s",
         (unsigned long long)g_frame.load(), (unsigned long long)g_stats.done, (unsigned long long)t.colors[0],

@@ -228,6 +228,24 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     `WriteBack::next`). `NX_WB_CARRY=0`: como antes. PC en modo Android: **26,6 → 53,0 fps**, ninguna espera, 0
     rechazos, imágenes normales (`runs/carry_cmp.png`). Pendiente: la tablet.
 
+25. **Ataques de los enemigos (las "bolas"): HECHO; naves negras: SIN RESOLVER.** NieR usaba cinco funciones NVN
+    que eran stubs: `DrawElementsIndirect`/`DrawArraysIndirect`, `ClearBuffer`, `CopyBufferToBuffer` y `ReportValue`
+    (`nvn_state.cpp`, nuevas `Cmd`). Ahora se graban y se reproducen: `ClearBuffer` con `vkCmdFillBuffer` sobre las
+    regiones de compute (o en memoria del juego), `CopyBufferToBuffer` con `vkCmdCopyBuffer` cuando toca regiones
+    (4.692 en GPU / 15.308 en memoria por partida), `ReportValue` escribe su u32. Con eso salen los anillos de los
+    proyectiles enemigos. Los draws indirectos (~47 por frame) leen su registro de la memoria del juego; si lo escribió
+    un dispatch del mismo envío (o del anterior, adoptado por wb-carry) se dibujan con `vkCmdDraw*Indirect` desde la
+    copia en la GPU (vértices enteros, índices hasta el mayor `first + count` visto en ese registro + margen;
+    `NX_GPU_INDIRECT=0`: como antes). Son ~2.500 por partida, partículas (`{36 32 0 0 0}`), no las naves. PC 50,8 fps.
+    **Naves**: siguen oscuras. Descartado en esta sesión: (a) registros indirectos escritos por la GPU (arriba);
+    (b) shaders de vértice/fragmento que escriban storage (ninguno, según la reflexión); (c) consultas de oclusión
+    "samples passed" (tipo 1) con diferencia de 1 entre informes (`NX_SAMPLES_SHIFT=16` probado: igual; retirado).
+    Siguiente: confirmar con `trace_draws` en modo síncrono si el pase de color de la nave existe (antes parecía estar
+    solo en los pases `zmap`) y revisar las sondas SH (búfer de 1.920 bytes) y la textura 8x8 negra del punto 21.
+    Ojo: aparece una espera nueva `reads that applied deferred write-backs: written ~60 (~770 ms)` cada 60 frames
+    (~13 ms/frame en PC) desde que `CopyBufferToBuffer`/`ClearBuffer` tocan regiones (camino compuesto de
+    `written_read`, que lee toda la memoria): candidata a optimizar.
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |

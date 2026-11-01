@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <deque>
 #include <map>
+#include <string>
 
 #include "nvn.h"
 #include "nvn_shaders.h"
@@ -122,6 +123,28 @@ void note_drop(uint64_t h, const HandleEntry& e, uint64_t by, uint64_t by_start,
     if (by == ~0ull) g_pool_drops++;
     else if (by) g_overlap_drops++;
     else g_aged++, g_aged_called += e.calls != 0;
+    // NX_LOG_UNSUBMITTED=1: lists with draws that were never submitted nor called, with the programs they bind (the
+    // draws "recorded" but never "replayed" in the draw counts).
+    static const bool unsubmitted = std::getenv("NX_LOG_UNSUBMITTED") != nullptr;
+    static uint64_t lost_lists = 0, lost_draws = 0;
+    if (unsubmitted && !e.calls && e.list) {
+        uint32_t draws = 0;
+        std::string progs;
+        for (const Cmd& k : e.list->cmds) {
+            draws += k.op == Cmd::DrawArrays || k.op == Cmd::DrawElements || k.op == Cmd::DrawElementsIndirect ||
+                     k.op == Cmd::DrawArraysIndirect;
+            if (k.op == Cmd::BindProgram && progs.size() < 300)
+                if (const auto* sh = program_shaders(k.a[0]))
+                    for (const ShaderInfo* s : *sh) progs += " " + s->hash.substr(0, 8);
+        }
+        if (draws) {
+            lost_lists++, lost_draws += draws;
+            if (lost_lists <= 30 || lost_lists % 1000 == 0)
+                log("nvn: list %llx (cb %llx) dropped unsubmitted with %u draws (%llu lists, %llu draws so far):%s",
+                    (unsigned long long)h, (unsigned long long)e.cb, draws, (unsigned long long)lost_lists,
+                    (unsigned long long)lost_draws, progs.c_str());
+        }
+    }
     Dropped d{h,     by,       e.start, e.end,   e.pool, e.cb, e.calls, by_start, by_end, by_pool,
               by_cb, float(e.t), float(seconds_now())};
     if (!by) {  // few: kept by handle (the ring below is overwritten by later handles' overlap drops)

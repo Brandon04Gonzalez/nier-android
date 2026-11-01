@@ -151,6 +151,16 @@ void draw_command(VkCommandBuffer cb, const Cmd& c, const CmdList& list, const T
         }
         case Cmd::DrawArrays: draw_call(cb, targets, c.n, false, c); break;
         case Cmd::DrawElements: draw_call(cb, targets, c.n, true, c); break;
+        case Cmd::DrawElementsIndirect:
+        case Cmd::DrawArraysIndirect: draw_indirect_call(cb, targets, c); break;
+        case Cmd::ClearBuffer: written_clear_buffer(cb, guest_bytes(c.a[0]), c.a[1], c.n); break;
+        case Cmd::CopyBufferToBuffer: written_copy_buffer(cb, guest_bytes(c.a[0]), guest_bytes(c.a[1]), c.a[2]); break;
+        case Cmd::ReportValue:
+            if (uint8_t* p = const_cast<uint8_t*>(guest_bytes(c.a[0]))) {
+                std::memcpy(p, &c.n, 4);
+                dedup_invalidate(p, 4);
+            }
+            break;
         default: raster_command(c); break;
     }
 }

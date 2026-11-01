@@ -11,6 +11,7 @@
 #include <string>
 #include <cstring>
 #include <set>
+#include <unordered_map>
 
 #include "nvn_draw_state.h"
 #include "nvn_ultrawide.h"
@@ -452,6 +453,10 @@ int exp_render_pass() {
     return env | (live & kLiveRpNoLoad ? 1 : 0) | (live & kLiveRpNoStore ? 2 : 0) | (live & kLiveRpSplit ? 4 : 0);
 }
 
+// An indirect draw whose record a dispatch of this submit wrote (draw_indirect_call): drawn from the GPU copy.
+static bool g_indirect_gpu = false;
+static Upload g_indirect_record{};
+
 namespace {
 
 // NX_RESTART_STATS=1: per NVN primitive mode, the indexed draws made while restart is on, how many hold the restart
@@ -549,6 +554,40 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     if (!vs) {
         g_stats.no_vertex++;
         return false;
+    }
+    // NX_DEBUG_FX=<fs hash>: for draws with that fragment shader, now and then, the 160-byte instance record NieR's
+    // effect vertex shaders read (index: vertex uniform buffer 4's first word; colour at +48) from each vertex storage
+    // binding, and whether a dispatch of this submit wrote it.
+    if (static const char* fx = std::getenv("NX_DEBUG_FX"); fx && fs && fs->hash == fx) {
+        static uint64_t n = 0;
+        if (n++ % 400 == 0 && n < 40000) {
+            std::string slots;
+            for (uint32_t k = 0; k < 18; k++)
+                if (const Range& r = g_state.uniforms[0][k]; r.address) {
+                    int32_t w0 = 0;
+                    if (const uint8_t* p = guest_bytes(r.address)) std::memcpy(&w0, p, 4);
+                    slots += " u" + std::to_string(k) + "=" + std::to_string(r.size) + ":" + std::to_string(w0);
+                }
+            for (uint32_t k = 0; k < 16; k++)
+                if (const Range& r = g_state.storage[0][k]; r.address) slots += " s" + std::to_string(k) + "=" + std::to_string(r.size);
+            log("fx: draw %llu vertex bindings:%s", (unsigned long long)g_stats.done, slots.c_str());
+            const Range& u = g_state.uniforms[0][1];  // the translator's cb4 (c4.data[0].x): slot 1 here
+            const uint8_t* up = u.address ? guest_bytes(u.address) : nullptr;
+            int32_t idx = -1;
+            if (up) std::memcpy(&idx, up, 4);
+            for (uint32_t k = 0; k < 16; k++) {
+                const Range& sr = g_state.storage[0][k];
+                const uint8_t* sp = sr.address ? guest_bytes(sr.address) : nullptr;
+                if (!sp || idx < 0 || uint64_t(idx) * 160 + 160 > sr.size) continue;
+                float f[16];
+                std::memcpy(f, sp + uint64_t(idx) * 160, sizeof f);
+                log("fx: draw %llu sb%u %llx+%llu record %d: pos %.3g %.3g %.3g colour %.3g %.3g %.3g %.3g; written %d "
+                    "pending wb %d", (unsigned long long)g_stats.done, k, (unsigned long long)sr.address,
+                    (unsigned long long)sr.size, idx, double(f[3]), double(f[7]), double(f[11]), double(f[12]),
+                    double(f[13]), double(f[14]), double(f[15]), written_overlaps(sp + uint64_t(idx) * 160, 160),
+                    frame_write_back_pending(sp + uint64_t(idx) * 160, 160));
+            }
+        }
     }
     std::vector<const ShaderInfo*> swapped;  // NX_SWAP_FS / NX_SKIP_FS (nvn_draw_trace.cpp)
     if (!debug_shader_overrides(shaders, fs, swapped)) return false;
@@ -850,7 +889,9 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         }
         bool q = zero_draws_on() && zero_draws_begin(cb, vs->hash + " " + (fs ? fs->hash : std::string("-")));
         const int32_t oq = occlusion_query_begin(cb);  // P5R's occlusion culling (nvn_occlusion.cpp)
-        if (!occlusion_draw(cb, true, count, uint32_t(std::max(1, c.i[3])), 0, c.i[1], uint32_t(c.i[2])))
+        if (g_indirect_gpu)
+            p_vkCmdDrawIndexedIndirect(cb, g_indirect_record.buffer, g_indirect_record.offset, 1, 20);
+        else if (!occlusion_draw(cb, true, count, uint32_t(std::max(1, c.i[3])), 0, c.i[1], uint32_t(c.i[2])))
             p_vkCmdDrawIndexed(cb, count, uint32_t(std::max(1, c.i[3])), 0, c.i[1], uint32_t(c.i[2]));
         occlusion_query_end(cb, oq);
         if (q) zero_draws_end(cb);
@@ -858,7 +899,9 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         bool q = zero_draws_on() && zero_draws_begin(cb, vs->hash + " " + (fs ? fs->hash : std::string("-")));
         const int32_t oq = occlusion_query_begin(cb);
         const uint32_t vcount = exp_draw && exp3d == 2 ? std::min(uint32_t(c.i[1]), 3u) : uint32_t(c.i[1]);
-        if (!occlusion_draw(cb, false, vcount, uint32_t(std::max(1, c.i[3])), uint32_t(c.i[0]), 0, uint32_t(c.i[2])))
+        if (g_indirect_gpu)
+            p_vkCmdDrawIndirect(cb, g_indirect_record.buffer, g_indirect_record.offset, 1, 16);
+        else if (!occlusion_draw(cb, false, vcount, uint32_t(std::max(1, c.i[3])), uint32_t(c.i[0]), 0, uint32_t(c.i[2])))
             p_vkCmdDraw(cb, vcount, uint32_t(std::max(1, c.i[3])), uint32_t(c.i[0]), uint32_t(c.i[2]));
         occlusion_query_end(cb, oq);
         if (q) zero_draws_end(cb);
@@ -880,6 +923,28 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                       ((fs && snap_fs.find(fs->hash) != std::string::npos) ||
                        snap_fs.find(vs->hash) != std::string::npos) &&
                       ++snap_count;  // the vertex shader's hash matches too
+    // On demand while playing: a file named snap_fs in the data folder holding "<count> <fs hash>[,...]" snapshots
+    // target 0 right after each of the next <count> draws with one of those fragment shaders (frames/snap_<draw>.ppm),
+    // then is deleted. Checked about once a second; to see what a draw adds deep in a session (NieR's black ships).
+    static uint64_t snap_file_check = 0;
+    static std::string snap_once;
+    static int snap_once_left = 0;
+    if (plat::kDiagnostics && g_frame >= snap_file_check) {
+        snap_file_check = g_frame + 30;
+        std::string path = plat::data_root() + "/snap_fs";
+        if (FILE* file = plat::fopen_utf8(path, "rb")) {
+            char words[512] = {};
+            std::fread(words, 1, sizeof words - 1, file);
+            std::fclose(file);
+            std::remove(path.c_str());
+            char* rest = nullptr;
+            snap_once_left = int(std::strtol(words, &rest, 10));
+            snap_once = rest ? rest : "";
+            log("snap_fs: the next %d draws with%s (frame %llu)", snap_once_left, snap_once.c_str(),
+                (unsigned long long)g_frame.load());
+        }
+    }
+    if (snap_once_left > 0 && fs && snap_once.find(fs->hash) != std::string::npos) snap_by_fs = true, snap_once_left--;
     if ((snap_by_fs || snap_follow(t, vs, fs, g_textures.handles) || debug_snap_wanted(g_stats.done)) && t.color_count && t.colors[0])
         if (GpuImage* snap = image_of(t.colors[0])) draw_end_rendering(cb, 6), debug_snapshot(cb, *snap, g_stats.done);
     // NX_DUMP_ON_TARGET=<hex NVNtexture*>: every NX_DUMP_FRAMES-th draw into it asks for NX_DUMP_TEXTURES to be read
@@ -1127,6 +1192,77 @@ uint64_t submit_start_ns() { return g_submit_ns; }
 // Entry points of the draws and dispatches for draw_command (nvn_draw_state.cpp).
 bool draw_call(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, const Cmd& c) {
     return draw(cb, t, mode, indexed, c);
+}
+
+bool g_draw_from_indirect = false;
+bool g_draw_untrimmed = false;
+
+// DrawElementsIndirect / DrawArraysIndirect (nvn_state.cpp): {count, instances, first index, base vertex, base
+// instance} / {count, instances, first, base instance}, the layouts of Vulkan's indirect commands.
+// - Written by a dispatch of this submit, or by the last one and carried here (written_adopt): only the GPU knows it
+//   (NieR's GPU culling: the ships' and structures' colour passes). Drawn with vkCmdDraw*Indirect from that copy; the
+//   uploads cannot be cut to its counts: whole vertex bindings, and the indices from the base up to the largest end
+//   (first + count) seen at this record (guest memory gets the results a frame or two later), with a margin.
+// - Otherwise read from guest memory (earlier submits' results landed first) and drawn as a plain draw.
+// NX_GPU_INDIRECT=0: always from guest memory.
+bool draw_indirect_call(VkCommandBuffer cb, const Targets& t, const Cmd& c) {
+    const bool indexed = c.op == Cmd::DrawElementsIndirect;
+    const uint8_t* rec = guest_bytes(c.a[1]);
+    if (!rec) return false;
+    const uint64_t bytes = indexed ? 20 : 16;
+    static const bool gpu_on = !(std::getenv("NX_GPU_INDIRECT") && std::getenv("NX_GPU_INDIRECT")[0] == '0');
+    static uint64_t draws = 0, gpu = 0, unknown = 0;
+    static std::unordered_map<uint64_t, uint32_t> ends;  // record address -> largest first + count seen
+    draws++;
+    if (gpu_on && !written_separate()) written_adopt(cb, rec, bytes);
+    Upload src;
+    if (gpu_on && !written_separate() && written_overlaps(rec, bytes) && written_read(cb, rec, bytes, bytes, 4, src)) {
+        int32_t v[5] = {};
+        std::memcpy(v, rec, bytes);  // stale (a frame or two old): only the size of the uploads
+        uint32_t& end = ends[c.a[1]];
+        const uint32_t seen = uint32_t(std::max(0, v[0])) + uint32_t(std::max(0, v[2]));
+        if (seen < (64u << 20)) end = std::max(end, seen);
+        gpu++;
+        if ((gpu & (gpu - 1)) == 0)
+            log("nvn: indirect draws from the GPU: %llu of %llu (%llu without a known size); record %llx {%d %d %d %d %d}, "
+                "end %u", (unsigned long long)gpu, (unsigned long long)draws, (unsigned long long)unknown,
+                (unsigned long long)c.a[1], v[0], v[1], v[2], v[3], indexed ? v[4] : 0, end);
+        if (end || !indexed) {  // (arrays: the whole vertex bindings are enough)
+            const uint32_t n = end + end / 4 + 1024;
+            Cmd d = c;
+            d.a[1] = 0;
+            if (indexed) d.op = Cmd::DrawElements, d.i[0] = int32_t(n), d.i[1] = 0, d.i[2] = 0, d.i[3] = 1;
+            else d.op = Cmd::DrawArrays, d.i[0] = 0, d.i[1] = int32_t(n), d.i[2] = 0, d.i[3] = 1;
+            g_draw_from_indirect = g_draw_untrimmed = g_indirect_gpu = true;
+            g_indirect_record = src;
+            const bool drawn = draw(cb, t, d.n, indexed, d);
+            g_draw_from_indirect = g_draw_untrimmed = g_indirect_gpu = false;
+            return drawn;
+        }
+        unknown++;  // never seen a count here: the stale record below (most likely nothing)
+    }
+    if ((draws & (draws - 1)) == 0 || draws % 20000 == 0)
+        log("nvn: indirect draws: %llu, %llu from the GPU", (unsigned long long)draws, (unsigned long long)gpu);
+    frame_guest_read(rec, bytes, kReadIndirect);
+    int32_t v[5] = {};
+    std::memcpy(v, rec, bytes);
+    if (v[0] <= 0 || v[1] <= 0) return false;  // nothing to draw (a culled object)
+    if (indexed) ends[c.a[1]] = std::max(ends[c.a[1]], uint32_t(v[0]) + uint32_t(std::max(0, v[2])));
+    Cmd d = c;
+    d.a[1] = 0;
+    if (indexed) {
+        d.op = Cmd::DrawElements;
+        d.i[0] = v[0];
+        d.a[0] = c.a[0] + uint64_t(uint32_t(v[2])) * index_size(c.mask);
+        d.i[1] = v[3], d.i[2] = v[4], d.i[3] = v[1];
+    } else {
+        d.op = Cmd::DrawArrays;
+        d.i[0] = v[2], d.i[1] = v[0], d.i[2] = v[3], d.i[3] = v[1];
+    }
+    g_draw_from_indirect = true;
+    const bool drawn = draw(cb, t, d.n, indexed, d);
+    g_draw_from_indirect = false;
+    return drawn;
 }
 void dispatch_call(VkCommandBuffer cb, const Cmd& c) { dispatch(cb, c); }
 

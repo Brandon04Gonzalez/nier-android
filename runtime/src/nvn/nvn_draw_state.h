@@ -89,6 +89,9 @@ void trace_draw(const Targets& t, uint32_t mode, bool indexed, const Cmd& c, con
 namespace nx::nvn {
 uint64_t submit_start_ns();  // host ns at the start of the submit being replayed
 bool draw_call(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, const Cmd& c);
+bool draw_indirect_call(VkCommandBuffer cb, const Targets& t, const Cmd& c);  // DrawElements/ArraysIndirect
+extern bool g_draw_from_indirect;  // the draw being replayed came from an indirect one (trace lines say IND)
+extern bool g_draw_untrimmed;  // its counts are on the GPU: the whole vertex bindings are uploaded (draw_inputs)
 void dispatch_call(VkCommandBuffer cb, const Cmd& c);
 }  // namespace nx::nvn
 
@@ -118,6 +121,9 @@ bool written_overlaps(const uint8_t* p, uint64_t size);
 // A draw's storage binding over a written region (it may write the copy): counted as written_bind calls are, so a
 // pipelined split (nvn_frames.cpp) does not copy the region back before that draw ran.
 void written_count_bind();
+// ClearBuffer / CopyBufferToBuffer replayed in command order (nvn_written.cpp).
+void written_clear_buffer(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint32_t value);
+void written_copy_buffer(VkCommandBuffer cb, const uint8_t* src, const uint8_t* dst, uint64_t size);
 // The last submit's compute result over [p, p + size), carried on the GPU, as a region of this submit (no wait).
 bool written_adopt(VkCommandBuffer cb, const uint8_t* p, uint64_t size);
 bool written_indirect(VkCommandBuffer cb, const uint8_t* p);  // vkCmdDispatchIndirect when a dispatch wrote {x, y, z}

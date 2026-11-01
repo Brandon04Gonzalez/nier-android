@@ -7,6 +7,7 @@
 // command order); each range is written back once. NX_COMPUTE_SEPARATE=1: the previous behaviour.
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -318,6 +319,81 @@ bool written_overlaps(const uint8_t* p, uint64_t size) {
     return p && size && !g_regions.empty() && !overlapping(p, size).empty();
 }
 
+// The parts of [p, p + size) inside regions of this submit, in address order, and whether they cover all of it.
+static bool region_parts(const uint8_t* p, uint64_t size, std::vector<It>& regs) {
+    regs = overlapping(p, size);
+    uint64_t covered = 0;
+    for (It it : regs)
+        covered += uint64_t(std::min(it->first + it->second.size, p + size) - std::max(it->first, p));
+    return !regs.empty() && covered == size;
+}
+
+// The clear in guest memory, after the earlier submits' results over it landed.
+static void written_clear_buffer_guest(const uint8_t* p, uint64_t size, uint32_t value) {
+    frame_guest_read(p, size, kReadOther);
+    uint8_t* q = const_cast<uint8_t*>(p);
+    for (uint64_t k = 0; k < size; k += 4) std::memcpy(q + k, &value, std::min<uint64_t>(4, size - k));
+    dedup_invalidate(p, size);
+}
+
+void written_clear_buffer(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint32_t value) {
+    if (!p || !size) return;
+    static uint64_t gpu = 0, cpu = 0;
+    if ((gpu + cpu) % 20000 == 0)
+        log("nvn: ClearBuffer: %llu on GPU copies, %llu in guest memory", (unsigned long long)gpu, (unsigned long long)cpu);
+    std::vector<It> regs;
+    if (overlapping(p, size).empty()) written_adopt(cb, p, size);  // the last submit's result, on the GPU
+    if (region_parts(p, size, regs) && size % 4 == 0) {  // a dispatch wrote it: clear the copy, in command order
+        draw_end_rendering(cb, 2);
+        for (It it : regs) {
+            const uint8_t* lo = std::max(it->first, p);
+            const uint8_t* hi = std::min(it->first + it->second.size, p + size);
+            const uint64_t off = it->second.up.offset + uint64_t(lo - it->first);
+            if (off % 4 || uint64_t(hi - lo) % 4) return written_clear_buffer_guest(p, size, value), void();
+            p_vkCmdFillBuffer(cb, it->second.up.buffer, off, uint64_t(hi - lo), value);
+        }
+        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        p_vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr,
+                               0, nullptr);
+        gpu++;
+        return;
+    }
+    cpu++;
+    written_clear_buffer_guest(p, size, value);
+}
+
+void written_copy_buffer(VkCommandBuffer cb, const uint8_t* src, const uint8_t* dst, uint64_t size) {
+    if (!src || !dst || !size) return;
+    if (overlapping(src, size).empty()) written_adopt(cb, src, size);
+    if (overlapping(dst, size).empty()) written_adopt(cb, dst, size);
+    const bool gpu_src = !overlapping(src, size).empty(), gpu_dst = !overlapping(dst, size).empty();
+    static uint64_t gpu = 0, cpu = 0;
+    if ((gpu + cpu) % 20000 == 0) log("nvn: CopyBufferToBuffer: %llu on the GPU, %llu in guest memory", (unsigned long long)gpu, (unsigned long long)cpu);
+    if (!gpu_src && !gpu_dst) {  // plain guest memory on both sides: earlier submits' results land first
+        cpu++;
+        frame_guest_read(src, size, kReadOther);
+        frame_guest_read(dst, size, kReadOther);
+        std::memmove(const_cast<uint8_t*>(dst), src, size);
+        dedup_invalidate(dst, size);
+        return;
+    }
+    // GPU data on one side: the copy goes into a region for dst (written back like a dispatch's output), in order.
+    gpu++;
+    Upload from;
+    if (!written_read(cb, src, size, size, 4, from)) from = dedup_upload(src, size, size, 4);
+    Upload to = written_bind(cb, dst, size, size);
+    draw_end_rendering(cb, 2);
+    VkBufferCopy copy{from.offset, to.offset, size};
+    p_vkCmdCopyBuffer(cb, from.buffer, to.buffer, 1, &copy);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    p_vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr,
+                           0, nullptr);
+}
+
 bool written_adopt(VkCommandBuffer cb, const uint8_t* p, uint64_t size) {
     return p && size && !written_separate() && overlapping(p, size).empty() && adopt(cb, p, size, size);
 }
@@ -367,7 +443,7 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
     static const bool trim = !(std::getenv("NX_VERTEX_TRIM") && std::getenv("NX_VERTEX_TRIM")[0] == '0');
     uint64_t lo = 0, hi = 0, inst_lo = 0, inst_hi = 0;
     // From the command, not `indexed`: draw_inputs_shared asks for the vertex streams of an indexed draw with false.
-    const bool ranged = trim && fetched_range(c.op == Cmd::DrawElements, c, lo, hi, inst_lo, inst_hi);
+    const bool ranged = trim && !g_draw_untrimmed && fetched_range(c.op == Cmd::DrawElements, c, lo, hi, inst_lo, inst_hi);
     for (uint32_t s = 0; s < 15; s++) {
         if (!(in.used >> s & 1)) continue;
         const Range& r = g_state.vertex_buffers[s];
@@ -610,6 +686,21 @@ void apply_write_back(const WriteBack& w) {
             if (expect) expect[k] = from[k];
         }
     if (next_before) std::memcpy(next_before->data(), from, w.size);
+    // NX_LOG_WB_SIZE=<bytes>: the first floats of write-backs of that size, now and then (what a compute produced).
+    static const uint64_t log_size = std::getenv("NX_LOG_WB_SIZE") ? std::strtoull(std::getenv("NX_LOG_WB_SIZE"), nullptr, 10) : 0;
+    static uint64_t log_n = 0;
+    if (log_size && w.size == log_size && (log_n++ % 120) == 0) {
+        std::string line;
+        for (uint64_t k = 0; k < 24 && 4 * k + 4 <= w.size; k++) {
+            float f;
+            std::memcpy(&f, from + 4 * k, 4);
+            char b[24];
+            std::snprintf(b, sizeof b, " %.4g", double(f));
+            line += b;
+        }
+        log("nvn: write-back %p (%llu bytes), %llu words changed:%s", (void*)w.to, (unsigned long long)w.size,
+            (unsigned long long)changed, line.c_str());
+    }
     g_wb_changed += changed;
     g_wb_ns += plat::monotonic_ns() - t0;
 }
