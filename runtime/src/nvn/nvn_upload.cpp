@@ -259,8 +259,11 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img, uint64_
     auto levels = deswizzle_texture(reinterpret_cast<const uint8_t*>(t.memory), t.storage_size, img.width,
                                     img.height, layers, img.levels, bw, bh, bytes, linear, t.block_height_gobs);
     if (levels.empty()) {
-        log("nvn/vk: texture %ux%u format %#x: could not untile (%llu bytes)", img.width, img.height, t.format,
-            (unsigned long long)t.storage_size);
+        TextureLayout need = block_linear_layout(img.width, img.height, layers, img.levels, bw, bh, bytes,
+                                                 t.block_height_gobs);
+        log("nvn/vk: texture %ux%u format %#x: could not untile (%llu bytes; %u levels x %u layers, block height %u, "
+            "needs %llu) at %llx", img.width, img.height, t.format, (unsigned long long)t.storage_size, img.levels,
+            layers, t.block_height_gobs, (unsigned long long)need.tiled_size, (unsigned long long)t.memory);
         return;
     }
     if (decode) {  // every level's blocks -> texels, tightly packed, then copied as an uncompressed image

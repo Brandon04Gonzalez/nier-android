@@ -80,6 +80,10 @@ Layout compute(CPU& c, uint64_t builder) {
     uint32_t levels = std::max<uint32_t>(1, uint32_t(driver(c, "nvnTextureBuilderGetLevels", {builder})));
     uint32_t samples = std::max<uint32_t>(1, uint32_t(driver(c, "nvnTextureBuilderGetSamples", {builder})));
     uint32_t stride = uint32_t(driver(c, "nvnTextureBuilderGetStride", {builder}));
+    // A cube map's six faces are layers its builder's depth does not count (nvnTextureBuilderSetSize2D); the SDK
+    // driver sizes six. With one, NieR's environment cube maps were refused at upload (storage for one face, the
+    // layout needing six) and stayed empty: the flight units and the enemies, lit by them, came out black.
+    if (driver(c, "nvnTextureBuilderGetTarget", {builder}) == 8 && depth < 6) depth = 6;  // NVN_TEXTURE_TARGET_CUBEMAP
     FormatInfo f = format_info(format);
     Layout l;
     if (stride) {  // linear (pitch) texture
