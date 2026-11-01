@@ -178,6 +178,19 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     debajo de 30 fps no salta frames: el juego entero va más despacio. A 15 fps en la tablet va a media velocidad.
     Solo se arregla subiendo los fps (o saltando frames sin dibujarlos). La pista de PC de la iluminación global
     (mod FAR: 128 volúmenes de luz) no parece aplicar: en Switch no hay ningún compute con 128 grupos.
+20. **Cubemaps de entorno vacíos: ARREGLADO** (`0a73f6c`). Las 6 texturas que salían con `could not untile` en PC y
+    en la tablet eran todas cubemaps (reflejo 256x256 ASTC 6x6 con 9 mips, 128x128 y 64x64 ASTC, 64x64 y 32x32 RGBA8):
+    `nvnTextureBuilderGetStorageSize` (HLE, `nvn_texture_layout.cpp`) contaba una sola cara porque el `depth` del
+    builder de un cubemap (target 8) es 1; el driver de la Switch reserva 6. Ahora cuenta 6. Resultado: 0 texturas
+    rechazadas (PC y tablet), el mar refleja el cielo (verde azulado en vez de gris oscuro, `runs/cube1/cmp.png`).
+21. **Naves y enemigos negros: SIN RESOLVER** (también en PC; siguen negros con los cubemaps arreglados): negro puro,
+    solo se ve el brillo de los motores. En el frame del mar las draws opacas de la escena principal son 34 de
+    `fs 66b7c1c862052729` (lee una textura de 4x4 ASTC, dos de 32x32 RGBA8 y una de 8x8; mezcla aditiva: puede no ser
+    la nave), 6 de `fs e0308bb136058637` y la del agua (`3be06d89029de5d4`, 15 texturas). Siguiente: identificar el
+    draw de las naves con instantáneas. Ojo: `NX_SNAP_FS=<hash>@<draw>` solo escribe en modo síncrono (sin
+    `NX_PIPELINED`), y el umbral es el contador global de draws (~2,2 M en el mar a los 270 s de `bench.sh`). Sospechas:
+    las sondas de luz de la GI (el búfer de 1.920 bytes de la espera de write-backs encaja con 40 sondas SH L1) o una
+    textura del material que no se sube. Tampoco miradas aún las zonas negro/blanco de más adelante.
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
