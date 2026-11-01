@@ -198,6 +198,21 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     principio): puede ser negra de verdad. Siguiente paso: instantáneas en modo síncrono alrededor del draw 2,2 M para
     saber qué draw es la nave, y mirar su shader (¿las sondas SH del búfer de 1.920 bytes?).
 
+22. **Rendimiento: las esperas de write-backs no tienen atajo** (PC, modo Android). Techo sin write-backs
+    (`NX_EXP_NO_WB=1`, inseguro): 29,6 fps (el tope de 30) frente a 26,6, y 69 fps sin limitador. Probado no esperar en
+    el `written bind` (dejar empezar el compute con los datos de un frame antes): la espera pasa entera a los
+    **argumentos de un dispatch indirecto** (12 bytes que calcula la GPU en el frame anterior; ~30 ms por frame) y
+    va peor (24,5 fps); retirado. NieR realimenta resultados de la GPU al frame siguiente por los dos caminos. El arreglo
+    de verdad: mantener esas regiones en la GPU entre envíos (búfer persistente copiado al acabar cada envío, `before`
+    rellenado al aplicar el write-back anterior) y lanzar el dispatch indirecto desde un búfer de GPU
+    (`vkCmdDispatchIndirect`) en vez de leer los argumentos en la CPU.
+23. **60 fps: la lógica de NieR avanza un paso fijo por frame.** El juego pide intervalo 2 al crear la ventana y el
+    lanzador (`NX_FPS_CAP`) no lo cambia en NieR (lo de `frame_time_probe` es de Wonder y aquí no actúa). Nuevo
+    `NX_PRESENT_INTERVAL=1` (diagnóstico, `runs/fps_i1` contra `fps_i2`, volcados cada 20 s de tiempo real): 55,5 fps,
+    pero el texto del arranque y el título van al **doble de velocidad** (a los 20 s, 21 líneas contra 7). Para 60 fps
+    reales hay que encontrar la variable del paso de tiempo del motor (como el setter de P5R en su `game.cpp`) y
+    ponerla a 60; con ella también se podría bajar en los móviles lentos para que no vaya a cámara lenta.
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |

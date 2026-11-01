@@ -307,6 +307,19 @@ void QueueWaitSync(CPU& c) { c.x[0] = 1; }  // NVNboolean (NVNqueue*, const NVNs
 
 // ---- windows ----------------------------------------------------------------------------------------------------
 
+// NX_PRESENT_INTERVAL=<n> (diagnostic): the window's present interval whatever the game asks. NieR asks 2 (30 fps) and steps
+// its logic once per frame: with 1 it ran at ~55 fps on the PC but at double speed (boot text, title), so a real 60 fps
+// needs its engine's frame step too. 0 or unset: the game's.
+int forced_present_interval() {
+    static const int n = [] {
+        const char* e = std::getenv("NX_PRESENT_INTERVAL");
+        int v = e ? std::atoi(e) : 0;
+        if (v > 0) log("nvn: present interval forced to %d (NX_PRESENT_INTERVAL)", v);
+        return v > 0 ? v : 0;
+    }();
+    return n;
+}
+
 void WindowInitialize(CPU& c) {  // NVNboolean (NVNwindow*, const NVNwindowBuilder*)
     uint64_t guest = c.x[0], builder = c.x[1];
     auto& w = make<Window>(guest);
@@ -315,6 +328,7 @@ void WindowInitialize(CPU& c) {  // NVNboolean (NVNwindow*, const NVNwindowBuild
     w.active = int(driver(c, "nvnWindowBuilderGetNumActiveTextures", {builder}));
     if (w.active <= 0 || w.active > n) w.active = n;
     w.interval = int(driver(c, "nvnWindowBuilderGetPresentInterval", {builder}));
+    if (int forced = forced_present_interval()) w.interval = forced;
     log("nvn: window %llx: %d textures (%d active), present interval %d", (unsigned long long)guest, n, w.active, w.interval);
     c.x[0] = 1;
 }
@@ -575,7 +589,7 @@ void WindowSetPresentInterval(CPU& c) {
         if (w->interval != int(c.x[1]) && logged++ < 50)
             log("nvn: window present interval %d -> %d (frame %llu, from %s)", w->interval, int(c.x[1]),
                 (unsigned long long)g_frame.load(), describe(c.x[30]).c_str());
-        w->interval = int(c.x[1]);
+        w->interval = forced_present_interval() ? forced_present_interval() : int(c.x[1]);
     }
 }
 
