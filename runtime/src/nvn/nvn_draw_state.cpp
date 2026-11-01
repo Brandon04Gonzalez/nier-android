@@ -142,7 +142,20 @@ void draw_command(VkCommandBuffer cb, const Cmd& c, const CmdList& list, const T
                 // NX_FAKE_GPU_TIME=1: every report of a submit carries the submit's start (a GPU with no cost):
                 // the game picks its present interval from the timings it measures (bisecting its 30 fps mode).
                 static const bool fake = std::getenv("NX_FAKE_GPU_TIME") != nullptr;
-                uint64_t v[2] = {++reports, fake ? submit_start_ns() : plat::monotonic_ns()};
+                // The time since the submit's start advances at the GPU's measured rate (NX_GPU_TIME_FEED, NieR's
+                // dynamic resolution; nvn_gpu_busy.cpp) or at NX_GPU_TIME_SCALE=<x> (fixed, experiments), from
+                // where the last report left off when that is later: the timestamps never go back.
+                static const double fixed = std::getenv("NX_GPU_TIME_SCALE") ? std::atof(std::getenv("NX_GPU_TIME_SCALE")) : 0.0;
+                static uint64_t submit = 0, base = 0, last = 0;
+                static double scale = 1.0;
+                uint64_t now = plat::monotonic_ns();
+                if (submit_start_ns() != submit) {
+                    submit = submit_start_ns();
+                    scale = fixed > 0 ? fixed : gpu_time_scale();
+                    base = std::max(submit, last);
+                }
+                if (scale != 1.0) now = base + uint64_t(double(now - submit) * scale), last = std::max(last, now);
+                uint64_t v[2] = {++reports, fake ? submit_start_ns() : now};
                 std::memcpy(p, v, sizeof v);
                 dedup_invalidate(p, sizeof v);
                 written_cpu_write(p, sizeof v);

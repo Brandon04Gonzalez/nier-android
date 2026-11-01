@@ -575,6 +575,7 @@ void make_upload_buffer(uint64_t size) {
 }
 
 bool g_cb_replay = false;  // synchronous: what g_cb holds (NX_GPU_PROFILE=3 counts presents apart)
+uint64_t g_cb_begin_ns = 0;     // synchronous: when the replay into g_cb began (NX_GPU_TIME_FEED)
 
 bool begin(bool replay = false) {
     if (async_gpu()) return (g_cb = frame_begin(replay)) != VK_NULL_HANDLE;
@@ -584,6 +585,7 @@ bool begin(bool replay = false) {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (!check(p_vkBeginCommandBuffer(g_cb, &bi), "vkBeginCommandBuffer")) return false;
     gpu_busy_part_begin(0, 0, g_cb);  // NX_GPU_PROFILE=3: synchronous submits as slot 0's only part
+    g_cb_begin_ns = plat::monotonic_ns();
     return true;
 }
 
@@ -619,7 +621,7 @@ void end_and_wait(VkSemaphore wait, VkSemaphore signal) {
         VkResult w = p_vkWaitForFences(g_device, 1, &g_fence, VK_TRUE, 2'000'000'000ull);
         if (w == VK_TIMEOUT) gpu_hung("a submit did not finish in 2 s");
         check(w, "vkWaitForFences");
-        gpu_busy_retired(0, 1, g_cb_replay);
+        gpu_busy_retired(0, 1, g_cb_replay, g_cb_replay ? t0 - g_cb_begin_ns : 0);
     }
     frame_times().encode_ns += t1 - t0, frame_times().fence_ns += plat::monotonic_ns() - t1;
 }

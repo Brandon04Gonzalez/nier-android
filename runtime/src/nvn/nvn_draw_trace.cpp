@@ -526,6 +526,32 @@ void trace_draw(const Targets& t, uint32_t mode, bool indexed, const Cmd& c, con
                 for (uint64_t k = 0; k < std::min<uint64_t>(u.size / 16, 8); k++)
                     log("  fs c3[%llu] @%llx: %g %g %g %g", (unsigned long long)k, (unsigned long long)u.address,
                         f[4 * k], f[4 * k + 1], f[4 * k + 2], f[4 * k + 3]);
+        // NX_TRACE_STORAGE=<record bytes>: the vertex stage's storage bindings cut into records of that size (NieR's
+        // particles: 64 bytes per instance), how many are all zero, and the first two.
+        if (const char* rec_env = std::getenv("NX_TRACE_STORAGE"))
+            for (int slot = 0; slot < 4; slot++)
+                if (const Range& r = g_state.storage[0][slot]; r.address)
+                    if (const auto* w = reinterpret_cast<const uint32_t*>(guest_bytes(r.address))) {
+                        uint32_t rec = std::max(4u, uint32_t(std::strtoul(rec_env, nullptr, 10))) / 4, records = uint32_t(r.size / 4 / rec), zero = 0;
+                        for (uint32_t k = 0; k < records; k++) {
+                            bool z = true;
+                            for (uint32_t j = 0; j < rec && z; j++) z = w[k * rec + j] == 0;
+                            zero += z;
+                        }
+                        log("  vs s%d @%llx size %llu written %d: %u records, %u all zero", slot, (unsigned long long)r.address,
+                            (unsigned long long)r.size, int(written_overlaps(guest_bytes(r.address), r.size)), records, zero);
+                        for (uint32_t k = 0; k < std::min(records, 3u); k++) {
+                            std::string line;
+                            for (uint32_t j = 0; j < std::min(rec, 16u); j++) {
+                                float f;
+                                std::memcpy(&f, &w[k * rec + j], 4);
+                                char b[24];
+                                std::snprintf(b, sizeof b, " %g", f);
+                                line += b;
+                            }
+                            log("    [%u]%s", k, line.c_str());
+                        }
+                    }
         if (const Range& r = g_state.storage[0][0]; r.address && std::getenv("NX_TRACE_GLYPHS"))
             if (auto* g = guest_bytes(r.address))
                 for (uint64_t k = 0; k < std::min<uint64_t>(r.size / 64, 3); k++) {
@@ -749,6 +775,11 @@ bool debug_shader_overrides(const std::vector<const ShaderInfo*>*& shaders, cons
         }
     // NX_SKIP_FS=<hash>,<hash>: draws with those fragment shaders are dropped (to measure what they cost).
     static const std::string skip = std::getenv("NX_SKIP_FS") ? std::getenv("NX_SKIP_FS") : "";
+    // NX_SKIP_VS=<hash>,<hash>: the same for the other stages' shaders.
+    static const std::string skip_vs = std::getenv("NX_SKIP_VS") ? std::getenv("NX_SKIP_VS") : "";
+    if (!skip_vs.empty() && shaders)
+        for (const ShaderInfo* s : *shaders)
+            if (s && s != fs && skip_vs.find(s->hash) != std::string::npos) return false;
     return skip.empty() || !fs || skip.find(fs->hash) == std::string::npos;
 }
 

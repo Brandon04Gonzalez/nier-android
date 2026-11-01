@@ -1,6 +1,6 @@
 # Port nativo de NieR:Automata a Android — progreso
 
-Última actualización: 2026-10-31 (sesión 1, nocturna)
+Última actualización: 2026-11-01 (sesión 4)
 
 ## Estado en una línea
 
@@ -264,6 +264,31 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     Siguientes candidatos: identificar `f1f497…` y el compute `a686f6…` (¿se pueden saltar en menús o a calidad baja?),
     y reducir los pases de posproceso a media resolución con `GRAPHICS=low`. En juego (log del usuario
     `tab_runs/user_carry`): ~16-17 fps con ~15 ms de espera en `present` (también limitado por GPU).
+
+### Sesión 4 (2026-11-01)
+
+27. **Menú lento: resolución dinámica de NieR activada (`NX_GPU_TIME_FEED`, por defecto en NieR).** Lo encontrado:
+    - `NX_RENDER_RES` (la opción 480p del lanzador) **no baja nada en NieR**: con 854x480 los pases siguen a 1280x720
+      (el juego no usa `GetDefaultDisplayResolution` para su 3D). Esa opción solo cambia la ventana.
+    - El pase `fs f1f497…` del menú (8,6 ms en la tablet) es una escena 3D tapada por el menú: quads + dos draws de
+      2100 partículas instanciadas (`vs 46c7d649…`, datos por instancia de 64 bytes que escribe un compute). Quitarlo
+      (`NX_SKIP_FS`, `NX_SKIP_VS` nuevo) no cambia la imagen del menú, pero ese shader también sirve en el juego.
+    - **NieR tiene resolución dinámica** y la decide con sus contadores de timestamp (`ReportCounter` tipo 0). El
+      runtime los escribía con la hora de la CPU al reproducir, así que el motor medía el replay (~7–11 ms en la
+      tablet) y no la GPU (34–41 ms): nunca bajaba. Con los tiempos ×4 (`NX_GPU_TIME_SCALE=4`, diagnóstico) el 3D
+      pasa a 1056x594, el mínimo del motor en portátil (con ×20 igual; 0,825 por eje = 68 % de los píxeles).
+    - Arreglo: `NX_GPU_TIME_FEED=1` (por defecto en `games/nier/game.cpp`; `=0` en `config.txt` lo apaga). Cada frame
+      reproducido lleva timestamps de GPU sin esperas (`nvn_gpu_busy.cpp`, lo de `NX_GPU_PROFILE=3`); GPU/replay
+      (media móvil, 0,05–8) es el ritmo al que avanzan los timestamps de los informes dentro del envío, sin volver
+      atrás nunca. El log dice `gpu time feed: GPU x ms, replay y ms: report timestamps xk`. Otros juegos: apagado.
+    - **Tablet, menú de carga, A/B de 60 s** (`nier-port/tab_menu.sh`): **24,5 → 28,2 fps** (tope 30 en su
+      `config.txt`), espera en `present` 12,2 → 7,1 ms, imagen igual. En PC no cambia nada (GPU ≈ replay, factor ~1).
+    - Pulsaciones: con el menú a 28 fps la IZQUIERDA de 0,3 s del diálogo "¿Cargar…?" entra a la primera.
+      `nier-port/tab_play.sh <nombre> [segundos]` carga la partida y juega pulsando A (vuela y dispara), con
+      `EXTRA="K=V"` para líneas de `config.txt` solo en esa corrida.
+    - En juego no ayuda: 14–15 fps con y sin feed (`tab_runs/playA`, `playB`). La GPU gasta ~53–70 ms por frame y el
+      mínimo del motor solo quita un 32 % de píxeles al 3D. Además, `reads that applied deferred write-backs:
+      written 60 (1722 ms)` por 60 frames (~29 ms/frame de espera en el replay) y 23 write-backs/frame (11,6 ms).
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 

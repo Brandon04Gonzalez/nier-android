@@ -106,6 +106,14 @@ void game::renderer_start() {}
 void game::first_frame() {}
 
 void game::after_init() {
+    // Dynamic resolution: the engine lowers its 3D resolution (1280x720 down to 1056x594 in handheld mode) from the
+    // GPU times its timestamp counters measure. Those are the replay's unless the runtime feeds it the GPU's own
+    // (runtime nvn_gpu_busy.cpp, PROGRESO 27). config.txt NX_GPU_TIME_FEED=0 turns it off.
+#if defined(_WIN32)
+    if (!std::getenv("NX_GPU_TIME_FEED")) _putenv_s("NX_GPU_TIME_FEED", "1");
+#else
+    setenv("NX_GPU_TIME_FEED", "1", 0);
+#endif
     const LoadedModule* m = module_at(find_symbol("nnMain"));
     if (!m) return;
     g_main = m->base;

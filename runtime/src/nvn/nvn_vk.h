@@ -329,7 +329,11 @@ void janitor_wait(const std::atomic<bool>& done);
 bool gpu_busy_on();
 void gpu_busy_part_begin(uint32_t slot, uint32_t part, VkCommandBuffer cb);
 void gpu_busy_part_end(uint32_t slot, uint32_t part, VkCommandBuffer cb);
-void gpu_busy_retired(uint32_t slot, uint32_t queued, bool replay);
+void gpu_busy_retired(uint32_t slot, uint32_t queued, bool replay, uint64_t replay_ns);
+// NX_GPU_TIME_FEED=1: the GPU's measured time per replayed frame over the replay's own length (EMA, 0.05..8; 1 when
+// off or not measured yet). The counter reports' timestamps advance at that rate (nvn_draw_state.cpp), so an engine
+// that sizes its dynamic resolution from them sees the GPU's cost, not the replay's (NieR, PROGRESO 27).
+double gpu_time_scale();
 void gpu_busy_log(uint64_t frames);
 // NX_GPU_PROBE=1: fixed compute jobs timed in each present, the GPU clock and its memory bandwidth from inside
 // (nvn_gpu_probe.cpp).

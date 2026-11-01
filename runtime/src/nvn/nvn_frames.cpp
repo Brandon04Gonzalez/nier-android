@@ -89,6 +89,7 @@ struct Slot {
     bool replay = false;  // a submit's replay (not a present)
     uint64_t binds_at_split = 0;  // replay::written_bind_count() at the split
     uint64_t begin_ns = 0;
+    uint64_t replay_ns = 0;  // the replay's length (begin to submit), for the GPU time feed (nvn_gpu_busy.cpp)
 };
 
 Slot g_slots[kMaxSlots];
@@ -260,7 +261,7 @@ bool retire_oldest() {
     if (!s) return false;
     VkFence fences[kMaxParts];
     wait_fences(fences, queued_fences(*s, kMaxParts, fences));
-    gpu_busy_retired(uint32_t(s - g_slots), s->queued, s->replay);  // NX_GPU_PROFILE=3
+    gpu_busy_retired(uint32_t(s - g_slots), s->queued, s->replay, s->replay_ns);  // NX_GPU_PROFILE=3, NX_GPU_TIME_FEED
     if (s->deferred) g_stats.applied[2]++;
     apply_write_backs(*s);
     undefer(*s);
@@ -563,6 +564,7 @@ void frame_submit(VkSemaphore wait, VkSemaphore signal, std::vector<WriteBack> w
         g_stats.submits++;
         if (s.split_part >= 0) g_stats.replay_ns += plat::monotonic_ns() - s.begin_ns;
     }
+    s.replay_ns = s.replay ? plat::monotonic_ns() - s.begin_ns : 0;
     if (s.ok) gpu_busy_part_end(uint32_t(&s - g_slots), s.part, s.cbs[s.part]);
     const bool has_last = s.ok && submit_part(s.cbs[s.part], s.fences[s.part], wait, signal);
     if (has_last) s.queued |= 1u << s.part;
