@@ -150,19 +150,21 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     frame esperando write-backs (6–16 por frame, 2,4–3 MB, 0–4 % cambiado). Con los rayos sube el replay (más draws)
     y los write-backs.
 
-17. **Mar morado en la tablet** (en PC sale gris azulado; tinte morado en toda la escena). Descartado
-    `R11G11B10F` (con `NX_R11G11B10_EMULATE=1` sigue morado) y los avisos `could not untile` (salen igual en PC).
-    Causa probable: el traductor generaba los shaders para subgrupos de 32 (`QueryHostSubgroupSize() => 32`), y la
-    Adreno trabaja con 64/128 y en Vulkan 1.1 no se le puede imponer 32 (`subgroup sizes 0..0`). 12 shaders usan
-    shuffle/ballot (6 compute, 4 geometry, 2 fragment) y 2 más leen el número de hilo; se ejecutan en la tablet
-    `a686f64415f6841a` (compute 40x23 de 16x16), `b5a08228ec8650a8` y `d062cfa45091fd7e` (reducciones de 1.024
-    hilos), `6d6a27c9728fe79b` y `d9db47fa2f852c79`. Ahora el traductor usa 128 (cada warp de 32 va en su trozo del
-    subgrupo: válido con 32, 64 y 128). Solo cambian esos 14 SPIR-V (los originales en `spirv_sg32_backup`); el
-    traductor de NieR se compila aparte (`-p:NxBuildDir=spirv_harness_nier`) para no tocar el de P5R, que es común.
-    **Probado: el mar sigue morado** (el juego se reinició con los 14 SPIR-V nuevos). El cambio se queda (es correcto
-    para la Adreno), pero la causa del morado es otra. Descartados también los 4 compute que escriben imágenes sin
-    formato (`StorageImageWriteWithoutFormat`): no se ejecutan. Siguiente: volcados por pase en la escena del mar
-    (`NX_SNAP_FS` / `NX_SNAP_DRAWS`) para ver en qué pase aparece el morado, comparando con el PC.
+17. **Mar morado en la tablet: ARREGLADO** (`6074f49`). Solo salía en la cinemática de entrada al mar (con franjas
+    negras): la escena HDR ya llegaba magenta al tonemap (media 171/23/169; en PC gris). La LUT de color era idéntica
+    byte a byte a la del PC. Causa: la Adreno 610 muestrea los **ASTC 6x6 nativos** (NVN 0x7d y 0x8b, casi todas las
+    texturas de NieR) con el color de error de ASTC (magenta) en algunos sitios, aunque los mismos bloques se decodifican
+    bien en la CPU (0 inválidos). En PC no pasaba porque NVIDIA no tiene ASTC y siempre se decodifica en la CPU. Ahora
+    en Adreno 6xx o anterior esos dos formatos se decodifican al subirlos (`NX_ASTC_DECODE=0`: nativos). Coste en la
+    tablet: ~200 texturas, 223 MB, 0,8 s de CPU repartidos, ~1 fps. Comprobado en la tablet sin tocar `config.txt`.
+    Descartado antes: `R11G11B10F`, subgrupos (el cambio a 128 se queda, es correcto), imágenes sin formato, los avisos
+    `could not untile` y todas las opciones solo de Android (UBWC, clears por transferencia, UBO dinámicos, pase de
+    presentación, render pass objects) probadas en PC. Herramientas nuevas: archivo `dump_fs` (vuelca una vez el
+    siguiente draw con ese fs y lo que lee), `tab_sea.sh` (carga la partida con el archivo `press` y llega al mar).
+    Ojo: las pulsaciones de `adb input` no son fiables a 12 fps; el archivo `press` sí. Al cargar, "Sí" está a la
+    IZQUIERDA. El gris que sale luego en el mar es el aviso de vida baja del juego.
+    **Pendiente**: las naves y los enemigos salen negros todo el rato (también en PC), y más adelante zonas en negro
+    y blanco que el usuario dice que no son del juego.
 18. **De dónde sale la espera de los write-backs** (`NX_LOG_WB_READS=<n>` y la línea "reads that applied deferred
     write-backs", nuevos; PC con `NX_PIPELINED=1`, el modo de Android, `runs/wbsite1`): el 100 % es `written bind`.
     Cada frame un compute enlaza **los mismos 1.920 bytes** (`0x5923C3BD00`) que escribió un compute del frame
