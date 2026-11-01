@@ -727,6 +727,16 @@ uint64_t gpu_write_back_serial() {
     return async_gpu() ? g_barrier.load() : 0;
 }
 
+bool frame_write_backs_deferred() { return defer_write_backs(); }
+
+bool frame_write_back_pending(const uint8_t* p, uint64_t size) {
+    if (!g_deferred_slots.load(std::memory_order_relaxed) || !p || !size) return false;
+    if (p >= g_deferred_hi || p + size <= g_deferred_lo) return false;
+    for (const DeferredRange& r : g_deferred)
+        if (r.lo < p + size && r.hi > p) return true;
+    return false;
+}
+
 void frame_guest_read(const uint8_t* p, uint64_t size, int site) {
     if (!g_deferred_slots.load(std::memory_order_relaxed) || !p || !size) return;
     if (p >= g_deferred_hi || p + size <= g_deferred_lo) return;

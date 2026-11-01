@@ -220,6 +220,14 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     claramente por detrás). Ojo: el texto animado del arranque va por frames (a 60 fps se escribe el doble de rápido);
     es interfaz, no la lógica. Pendiente: probarlo en la tablet y vigilar fallos de física con pasos de hasta 4,0.
 
+24. **Esperas de write-backs eliminadas: HECHO** (`odd/tasks/wb-carry.md`). Al final de cada envío diferido las
+    regiones escritas por compute se copian en la GPU a un búfer propio (`written_carry`, 32 MB, `NX_WB_CARRY_MB`), y el
+    envío siguiente crea su región desde esa copia en la GPU en vez de esperar (`written_adopt`: enlace de compute,
+    lectura de compute y argumentos de dispatch indirecto), si el write-back sigue pendiente y la CPU no escribió esos
+    bytes (copia "esperada" por cadena; el `before` de la región adoptada lo rellena el write-back anterior,
+    `WriteBack::next`). `NX_WB_CARRY=0`: como antes. PC en modo Android: **26,6 → 53,0 fps**, ninguna espera, 0
+    rechazos, imágenes normales (`runs/carry_cmp.png`). Pendiente: la tablet.
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |

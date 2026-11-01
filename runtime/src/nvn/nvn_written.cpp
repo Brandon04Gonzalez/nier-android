@@ -20,6 +20,7 @@
 namespace nx::nvn {
 // Write-backs per log window (written_log): count, bytes compared, 8-byte words changed, host ns.
 std::atomic<uint64_t> g_wb_count{0}, g_wb_bytes{0}, g_wb_changed{0}, g_wb_ns{0};
+uint64_t frame_recording_serial();  // nvn_frames.cpp: the serial the submit being recorded will get
 }  // namespace nx::nvn
 
 namespace nx::nvn::replay {
@@ -36,6 +37,10 @@ struct Region {
     uint64_t cap = 0;   // bytes of the copy from up.offset (size, then zeros)
     Upload up;          // the copy of the key's first byte
     std::shared_ptr<std::vector<uint8_t>> before;  // the guest bytes copied in (what the GPU did not change)
+    // Carried results (written_carry / written_adopt): the guest bytes this range's chain of adopted regions expects
+    // (CPU writes aside; shared along the chain), and this region's write-back link (a successor fills it in).
+    std::shared_ptr<std::vector<uint8_t>> expect;
+    std::shared_ptr<WriteBackLink> link;
 };
 using Regions = std::map<const uint8_t*, Region>;
 using It = Regions::iterator;
@@ -113,6 +118,129 @@ It containing(const uint8_t* p, uint64_t size, uint64_t padded, uint64_t align, 
     return it;
 }
 
+// ---- results carried to the next submit (odd/tasks/wb-carry.md) ------------------------------------------------
+// A deferred submit's regions die with its stretch of the upload ring, and their results reach guest memory only when
+// its write-backs are applied, after its fence. NieR reads, every frame, what the previous frame's compute wrote (a
+// 1920-byte storage binding, 12-byte indirect dispatch arguments): each such read waited for that whole frame (~18 ms
+// a frame on the PC, 33-57 on the Adreno 610). So at the end of a deferred submit each region is copied on the GPU into
+// an arena of its own (written_carry), and the next submit makes a region of its own from that copy (written_adopt),
+// on the GPU, instead of waiting: when the write-back is still pending and the guest bytes are still what the chain
+// expects (the CPU did not write them since). NX_WB_CARRY=0: off.
+
+struct Carry {
+    uint64_t size = 0;
+    uint64_t offset = 0;  // in the arena
+    std::shared_ptr<std::vector<uint8_t>> expect;
+    std::shared_ptr<WriteBackLink> link;  // the region's write-back's (also in its WriteBack)
+};
+std::map<const uint8_t*, Carry> g_carries;  // the last deferred submit's, by range start
+VkBuffer g_arena = VK_NULL_HANDLE;
+VkDeviceMemory g_arena_memory = VK_NULL_HANDLE;
+uint64_t g_arena_size = 0, g_arena_head = 0;
+// Arena allocations in order, each freed once the submit after its producer (which copied from it) retired.
+struct ArenaUse {
+    uint64_t start = 0, end = 0;
+    uint64_t producer = 0, free_after = UINT64_MAX;  // free_after: that next submit's serial, once known
+};
+std::vector<ArenaUse> g_arena_uses;  // oldest first
+uint64_t g_adopted = 0, g_adopt_cpu = 0, g_carried = 0, g_carry_bytes = 0, g_carry_full = 0;  // for written_log
+
+bool carry_on() {
+    static const bool on = !(std::getenv("NX_WB_CARRY") && std::getenv("NX_WB_CARRY")[0] == '0');
+    return on && frame_write_backs_deferred() && !written_separate();
+}
+
+bool arena_make() {
+    if (g_arena) return true;
+    static bool failed = false;
+    if (failed) return false;
+    const char* e = std::getenv("NX_WB_CARRY_MB");
+    g_arena_size = uint64_t(std::clamp(e ? std::atoi(e) : 32, 1, 512)) << 20;
+    VkDevice d = vk_device();
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = g_arena_size;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VkMemoryRequirements req{};
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    if (p_vkCreateBuffer(d, &bi, nullptr, &g_arena) == VK_SUCCESS) {
+        p_vkGetBufferMemoryRequirements(d, g_arena, &req);
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (p_vkAllocateMemory(d, &ai, nullptr, &g_arena_memory) == VK_SUCCESS &&
+            p_vkBindBufferMemory(d, g_arena, g_arena_memory, 0) == VK_SUCCESS) {
+            log("nvn: compute results carried across submits (%llu MB arena)", (unsigned long long)(g_arena_size >> 20));
+            return true;
+        }
+    }
+    log("nvn: no arena for carried compute results: write-backs waited for as before");
+    if (g_arena) p_vkDestroyBuffer(d, g_arena, nullptr), g_arena = VK_NULL_HANDLE;
+    failed = true;
+    return false;
+}
+
+// `bytes` of the arena (256-aligned) for the submit being recorded, or false when full.
+bool arena_alloc(uint64_t bytes, uint64_t& at) {
+    const uint64_t done = frame_completed();
+    size_t gone = 0;
+    while (gone < g_arena_uses.size() && g_arena_uses[gone].free_after <= done) gone++;
+    g_arena_uses.erase(g_arena_uses.begin(), g_arena_uses.begin() + gone);
+    bytes = (bytes + 255) & ~255ull;
+    uint64_t start = 0;
+    if (!g_arena_uses.empty()) {
+        const uint64_t tail = g_arena_uses.front().start, head = g_arena_head;
+        if (head >= tail) {  // live: [tail, head)
+            if (head + bytes <= g_arena_size) start = head;
+            else if (bytes <= tail) start = 0;
+            else return false;
+        } else {  // live: [tail, end) and [0, head)
+            if (head + bytes <= tail) start = head;
+            else return false;
+        }
+    }
+    if (start + bytes > g_arena_size) return false;
+    g_arena_uses.push_back({start, start + bytes, frame_recording_serial(), UINT64_MAX});
+    g_arena_head = start + bytes;
+    at = start;
+    return true;
+}
+
+// A region of this submit for a carried range covering [p, p + size), made from the carry on the GPU; false when it
+// cannot be used (the old path then applies the write-back and waits).
+bool adopt(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_t padded) {
+    if (g_carries.empty() || !p || !size || !g_arena) return false;
+    auto next = g_carries.upper_bound(p);
+    if (next == g_carries.begin()) return false;
+    const auto& [lo, k] = *std::prev(next);
+    if (p < lo || p + size > lo + k.size) return false;
+    if (!overlapping(lo, k.size).empty()) return false;       // meets a region of this submit
+    if (!frame_write_back_pending(lo, k.size)) return false;  // the result is in guest memory already
+    if (!k.expect || k.expect->size() < k.size || std::memcmp(lo, k.expect->data(), k.size) != 0) {
+        g_adopt_cpu++;  // the CPU wrote these bytes since: its words must not be lost
+        return false;
+    }
+    const uint64_t off = uint64_t(p - lo);
+    Region r;
+    r.size = k.size;
+    r.cap = std::max(k.size + kTail, off + padded);
+    r.up = alloc_anchored(r.cap, off);
+    std::memset(r.up.ptr + k.size, 0, r.cap - k.size);
+    r.before = std::make_shared<std::vector<uint8_t>>(lo, lo + k.size);  // the GPU's bytes once the write-back lands
+    r.expect = k.expect;
+    k.link->before = r.before, k.link->expect = r.expect;
+    draw_end_rendering(cb, 2);
+    VkBufferCopy copy{k.offset, r.up.offset, k.size};
+    p_vkCmdCopyBuffer(cb, g_arena, r.up.buffer, 1, &copy);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    p_vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr,
+                           0, nullptr);
+    dedup_invalidate(lo, k.size);  // copies of these bytes made earlier in the submit are not what it now reads
+    g_regions.emplace(lo, std::move(r));
+    g_adopted++;
+    return true;
+}
+
 }  // namespace
 
 bool written_separate() {
@@ -126,6 +254,7 @@ void written_count_bind() { g_binds++; }
 Upload written_bind(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_t padded) {
     g_binds++;
     std::vector<It> old = overlapping(p, size);
+    if (old.empty() && adopt(cb, p, size, padded)) old = overlapping(p, size);  // the last submit's result, on the GPU
     if (It it = containing(p, size, padded, bind_align(), old); it != g_regions.end()) {
         write_after_read(cb);
         g_shared++;
@@ -158,8 +287,9 @@ Upload written_bind(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_
 }
 
 bool written_read(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_t padded, uint64_t align, Upload& out) {
-    if (!p || !size || g_regions.empty() || written_separate()) return false;
+    if (!p || !size || written_separate() || (g_regions.empty() && g_carries.empty())) return false;
     std::vector<It> regions = overlapping(p, size);
+    if (regions.empty() && adopt(cb, p, size, padded)) regions = overlapping(p, size);  // the last submit's result
     if (regions.empty()) return false;
     if (It it = containing(p, size, padded, align, regions); it != g_regions.end()) {
         g_shared++, g_read = true;
@@ -186,6 +316,10 @@ Upload read_upload(VkCommandBuffer cb, const uint8_t* p, uint64_t size, uint64_t
 
 bool written_overlaps(const uint8_t* p, uint64_t size) {
     return p && size && !g_regions.empty() && !overlapping(p, size).empty();
+}
+
+bool written_adopt(VkCommandBuffer cb, const uint8_t* p, uint64_t size) {
+    return p && size && !written_separate() && overlapping(p, size).empty() && adopt(cb, p, size, size);
 }
 
 bool written_indirect(VkCommandBuffer cb, const uint8_t* p) {
@@ -361,9 +495,42 @@ void written_cpu_write(const uint8_t* p, uint64_t size) {
 std::vector<WriteBack> written_take() {
     std::vector<WriteBack> v;
     v.reserve(g_regions.size());
-    for (auto& [p, r] : g_regions) v.push_back({r.up.ptr, const_cast<uint8_t*>(p), r.size, r.before});
+    for (auto& [p, r] : g_regions) v.push_back({r.up.ptr, const_cast<uint8_t*>(p), r.size, r.before, r.link});
     g_regions.clear();
     return v;
+}
+
+// End of a deferred submit (nvn_vk.cpp, before frame_submit takes its write-backs): every region copied into the
+// arena for the next submit to adopt. The carries of the submit before are dropped: the next one can only adopt
+// these (its arena space is kept until the submit after this one, which copied from it, retired).
+void written_carry(VkCommandBuffer cb) {
+    const uint64_t serial = frame_recording_serial();
+    for (ArenaUse& u : g_arena_uses)
+        if (u.producer < serial && u.free_after == UINT64_MAX) u.free_after = serial;
+    g_carries.clear();
+    if (g_regions.empty() || !carry_on() || !arena_make()) return;
+    bool any = false;
+    for (auto& [p, r] : g_regions) {
+        uint64_t at = 0;
+        if (!r.before || r.before->size() < r.size || !arena_alloc(r.size, at)) {
+            g_carry_full++;
+            continue;
+        }
+        if (!any) draw_end_rendering(cb, 2), any = true;
+        VkBufferCopy copy{r.up.offset, at, r.size};
+        p_vkCmdCopyBuffer(cb, r.up.buffer, g_arena, 1, &copy);
+        if (!r.expect) r.expect = std::make_shared<std::vector<uint8_t>>(r.before->begin(), r.before->begin() + r.size);
+        if (!r.link) r.link = std::make_shared<WriteBackLink>();
+        g_carries[p] = Carry{r.size, at, r.expect, r.link};
+        g_carried++, g_carry_bytes += r.size;
+    }
+    if (!any) return;
+    // What the next submit reads from the arena (later in submission order) waits for these copies.
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_MEMORY_READ_BIT;
+    p_vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr,
+                           0, nullptr);
 }
 
 void written_reset() { g_regions.clear(), g_read = false; }
@@ -373,7 +540,12 @@ void written_log() {
         log("nvn: compute ranges: %llu bindings of written copies, %llu merged, %llu reads composed on the GPU, %llu indirect",
             (unsigned long long)g_shared, (unsigned long long)g_merged, (unsigned long long)g_composed,
             (unsigned long long)g_indirect);
+    if (g_carried + g_adopted + g_adopt_cpu)
+        log("nvn: carried compute results: %llu ranges (%.1f MB), %llu adopted by the next submit, %llu refused (CPU "
+            "writes), %llu not carried (arena full)", (unsigned long long)g_carried, double(g_carry_bytes) / 1e6,
+            (unsigned long long)g_adopted, (unsigned long long)g_adopt_cpu, (unsigned long long)g_carry_full);
     g_shared = g_merged = g_composed = g_indirect = 0;
+    g_carried = g_carry_bytes = g_adopted = g_adopt_cpu = g_carry_full = 0;
 }
 
 }  // namespace nx::nvn::replay
@@ -398,8 +570,14 @@ void apply_write_back(const WriteBack& w) {
     static const bool whole = std::getenv("NX_WRITE_BACK_WHOLE") != nullptr;
     const uint64_t t0 = plat::monotonic_ns();
     g_wb_count++, g_wb_bytes += w.size;
+    // The next submit's region adopted from this result (written_adopt): its initial content is the GPU's bytes, and
+    // the guest bytes it expects change where this write-back changes them.
+    std::vector<uint8_t>* next_before = w.next && w.next->before && w.next->before->size() >= w.size ? w.next->before.get() : nullptr;
+    std::vector<uint8_t>* next_expect = w.next && w.next->expect && w.next->expect->size() >= w.size ? w.next->expect.get() : nullptr;
     if (whole || !w.before || w.before->size() < w.size) {
         std::memcpy(w.to, w.from, w.size);
+        if (next_before) std::memcpy(next_before->data(), w.to, w.size);
+        if (next_expect) std::memcpy(next_expect->data(), w.to, w.size);
         g_wb_ns += plat::monotonic_ns() - t0;
         return;
     }
@@ -415,15 +593,23 @@ void apply_write_back(const WriteBack& w) {
         std::memcpy(copy.data(), w.from, w.size);
         from = copy.data();
     }
+    uint8_t* expect = next_expect ? next_expect->data() : nullptr;
     uint64_t k = 0, changed = 0;
     for (; k + 8 <= w.size; k += 8) {
         if (std::memcmp(from + k, was + k, 8) == 0) continue;
         changed++;
         for (uint64_t b = k; b < k + 8; b += 4)
-            if (std::memcmp(from + b, was + b, 4) != 0) std::memcpy(w.to + b, from + b, 4);
+            if (std::memcmp(from + b, was + b, 4) != 0) {
+                std::memcpy(w.to + b, from + b, 4);
+                if (expect) std::memcpy(expect + b, from + b, 4);
+            }
     }
     for (; k < w.size; k++)
-        if (from[k] != was[k]) w.to[k] = from[k];
+        if (from[k] != was[k]) {
+            w.to[k] = from[k];
+            if (expect) expect[k] = from[k];
+        }
+    if (next_before) std::memcpy(next_before->data(), from, w.size);
     g_wb_changed += changed;
     g_wb_ns += plat::monotonic_ns() - t0;
 }

@@ -128,6 +128,12 @@ bool descriptor_layout_counts(VkDescriptorSetLayout layout, uint32_t (&by_type)[
 // A lost device or a submit running past 2 s: the process ends at once (docs/nvn/DEBUG.md #22).
 [[noreturn]] void gpu_hung(const char* why);
 
+// A later submit's region made from a write-back's GPU result before it was applied (nvn_written.cpp, written_adopt):
+// applying the write-back gives `before` the GPU's bytes (that region's initial content) and copies the words it
+// changes into `expect` (the guest bytes that region expects, CPU writes aside).
+struct WriteBackLink {
+    std::shared_ptr<std::vector<uint8_t>> before, expect;
+};
 // A compute shader's storage buffer, copied back to guest memory once the submit completed: (upload copy, guest
 // address, size).
 struct WriteBack {
@@ -136,8 +142,11 @@ struct WriteBack {
     uint64_t size;
     // The guest bytes as they were when the copy was made: only what the GPU changed goes back (nvn_written.cpp).
     std::shared_ptr<std::vector<uint8_t>> before;
+    std::shared_ptr<WriteBackLink> next = nullptr;  // filled in when the next submit adopts the range
 };
 void apply_write_back(const WriteBack& w);  // nvn_written.cpp
+bool frame_write_back_pending(const uint8_t* p, uint64_t size);  // nvn_frames.cpp: a deferred one overlaps
+bool frame_write_backs_deferred();  // nvn_frames.cpp: write-backs wait for a later read (pipelined)
 // Deferred write-backs (nvn_frames.cpp): those of earlier submits over [p, p + size) are applied first. Every
 // read of guest memory for the GPU calls it (uploads, compute bindings, texture uploads). `site` (GuestRead) says
 // which, for the log: which reads make the replay wait for the GPU.
@@ -346,6 +355,7 @@ namespace replay {
 void dedup_reset();  // nvn_dedup.cpp
 bool written_separate();         // nvn_written.cpp (nvn_draw_state.h)
 uint64_t written_bind_count();   // nvn_written.cpp: written_bind calls so far (a dispatch bound storage it writes)
+void written_carry(VkCommandBuffer cb);  // nvn_written.cpp: end of a deferred submit, before frame_submit
 void trace_nan_write_back(const uint8_t* from, const uint8_t* to, uint64_t size);  // nvn_draw_trace.cpp
 }
 

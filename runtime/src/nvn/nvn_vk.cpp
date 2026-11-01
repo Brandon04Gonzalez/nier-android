@@ -700,6 +700,7 @@ void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_
     g_timing.replay_ns += plat::monotonic_ns() - t0 - (f1.encode_ns - f0.encode_ns) - (f1.fence_ns - f0.fence_ns);
     g_timing.upload_bytes += async ? frame_upload_used() : g_upload_used;
     gpu_profile_mark(g_cb, "end");
+    if (async) replay::written_carry(g_cb);  // its compute results copied for the next submit (nvn_written.cpp)
     if (async)  // the profile, zero-draw queries and snapshots read this submit's results right below: waited for
         frame_submit(VK_NULL_HANDLE, VK_NULL_HANDLE, draw_take_write_backs(),
                      gpu_profile_on() || zero_draws_on() || debug_snapshots_pending(), draw_take_late_write_backs());
