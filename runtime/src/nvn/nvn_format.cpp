@@ -81,9 +81,19 @@ uint32_t g_astc_list[8] = {}, g_astc_listed = 0;  // NX_ASTC_DECODE=<hex format>
 
 // Without textureCompressionASTC_LDR (NVIDIA, AMD) ASTC textures are RGBA8 images, decoded at upload (nvn_astc.cpp).
 // NX_ASTC_DECODE=linear|srgb decodes only that half on a GPU that has ASTC (bisecting).
-void set_astc_native(bool native) {
+// decode_6x6 (Adreno 6xx and older): the Adreno 610 samples NieR's ASTC 6x6 textures as the error colour in places
+// (the sea entry came out magenta) though the same blocks decode cleanly on the CPU (0 invalid), so those two formats
+// are decoded at upload there. NX_ASTC_DECODE=0: native anyway.
+void set_astc_native(bool native, bool decode_6x6) {
     g_astc_native = native;
-    if (const char* e = std::getenv("NX_ASTC_DECODE"); e && native) {
+    const char* e = std::getenv("NX_ASTC_DECODE");
+    if (e && e[0] == '0' && !e[1]) return;
+    if (!e && native && decode_6x6) {
+        g_astc_native = false;
+        g_astc_list[0] = 0x7d, g_astc_list[1] = 0x8b, g_astc_listed = 2;  // ASTC 6x6 UNORM and sRGB
+        return;
+    }
+    if (e && native) {
         g_astc_decode = std::strcmp(e, "linear") == 0 ? 1u : std::strcmp(e, "srgb") == 0 ? 2u : 3u;
         g_astc_native = false;
         for (const char* p = e; std::strchr(p, ',') || std::strtoul(p, nullptr, 16) > 1; p = std::strchr(p, ',') + 1) {

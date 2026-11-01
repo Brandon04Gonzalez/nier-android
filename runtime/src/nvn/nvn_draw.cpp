@@ -292,6 +292,7 @@ void begin_rendering(VkCommandBuffer cb, const Targets& t) {
 }
 
 uint64_t g_dump_draws = 0, g_dump_request = 0;
+bool g_dump_once = false;  // dump_fs: read back after this submit whatever NX_DUMP_TARGET_EVERY says
 
 // The graphics stages bound now: one program for all of them (its own list), or a vertex and a fragment program
 // bound separately (their stages gathered in `out`).
@@ -894,6 +895,29 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         for (const ResolvedTexture& r : g_textures.resolved) debug_dump_add(r.texture);
         g_dump_request = ++g_dump_draws;
     }
+    // On demand while playing: a file named dump_fs in the data folder holding "<fs hash>[,...]" makes the next draw
+    // with one of those fragment shaders dump its target 0 and what it samples (NX_DUMP_ON_FS, once), then the file
+    // is deleted. Checked about once a second; for what only shows deep in a session (NieR's purple sea, Adreno).
+    static uint64_t fs_file_check = 0;
+    static std::string fs_once;
+    if (plat::kDiagnostics && g_frame >= fs_file_check) {
+        fs_file_check = g_frame + 30;
+        std::string path = plat::data_root() + "/dump_fs";
+        if (FILE* file = plat::fopen_utf8(path, "rb")) {
+            char words[512] = {};
+            std::fread(words, 1, sizeof words - 1, file);
+            std::fclose(file);
+            std::remove(path.c_str());
+            fs_once = words;
+            log("dump_fs: the next draw with %s (frame %llu)", fs_once.c_str(), (unsigned long long)g_frame.load());
+        }
+    }
+    if (!fs_once.empty() && fs && fs_once.find(fs->hash) != std::string::npos && t.colors[0] && image_of(t.colors[0])) {
+        fs_once.clear(), g_dump_once = true;
+        debug_dump_add(t.colors[0]);
+        for (const ResolvedTexture& r : g_textures.resolved) debug_dump_add(r.texture);
+        g_dump_request = ++g_dump_draws;
+    }
     trace_draw(t, mode, indexed, c, vs, fs, g_textures.bindings, g_textures.handles);
     return true;
 }
@@ -1107,6 +1131,12 @@ void dispatch_call(VkCommandBuffer cb, const Cmd& c) { dispatch(cb, c); }
 uint64_t draw_take_dump_request() {
     uint64_t r = g_dump_request;
     g_dump_request = 0;
+    return r;
+}
+
+bool draw_take_dump_once() {
+    bool r = g_dump_once;
+    g_dump_once = false;
     return r;
 }
 

@@ -280,7 +280,7 @@ bool sampler_entry_at(uint64_t pool, uint32_t id, uint64_t mark, SamplerSlot& ou
 VkFormat vk_format(uint32_t format);
 uint32_t format_aspect(uint32_t format);
 // ASTC on the host (nvn_format.cpp): native, or RGBA8 images filled by the CPU decoder at upload (nvn_upload.cpp).
-void set_astc_native(bool native);
+void set_astc_native(bool native, bool decode_6x6 = false);  // decode_6x6: Adreno 6xx and older
 bool astc_native();
 bool is_astc(uint32_t format);
 bool astc_decoded(uint32_t format);  // an ASTC format this device gets as RGBA8

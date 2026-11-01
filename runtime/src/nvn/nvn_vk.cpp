@@ -118,7 +118,6 @@ bool init() {
         log("nvn/vk: no Vulkan loader");
         return false;
     }
-    for (size_t k = 0; k < g_entry_count; k++) *g_entries[k].pfn = gipa(nullptr, g_entries[k].name);
     p_enum_instance_ext = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
         gipa(nullptr, "vkEnumerateInstanceExtensionProperties"));
     p_create_instance = reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance"));
@@ -265,7 +264,9 @@ bool init() {
             VK_API_VERSION_MINOR(props.apiVersion));
     g_features = features.features;
     // NX_ASTC_DECODE=1|linear|srgb: the CPU decoder even where the GPU has ASTC (to compare the two on one GPU).
-    set_astc_native(g_features.textureCompressionASTC_LDR);
+    set_astc_native(g_features.textureCompressionASTC_LDR, is_adreno_6xx_or_older());
+    if (g_features.textureCompressionASTC_LDR && is_adreno_6xx_or_older() && !astc_native())
+        log("nvn/vk: ASTC 6x6 decoded on the CPU (Adreno 6xx: native 6x6 came out as the error colour)");
     log("nvn/vk: ASTC %s", astc_native() ? "native" : "decoded to RGBA8 at upload (no textureCompressionASTC_LDR)");
     log("nvn/vk: depthClamp %u, depthBiasClamp %u, depthBounds %u, depth clip control %u (extension %u)",
         g_features.depthClamp, g_features.depthBiasClamp, g_features.depthBounds, g_depth_clip_control,
@@ -489,6 +490,12 @@ bool is_mali() {
 bool is_adreno() {
     return std::strstr(g_device_props.deviceName, "Adreno") != nullptr || g_device_props.vendorID == 0x5143;
 }
+bool is_adreno_6xx_or_older() {  // "Adreno (TM) 610", 5xx...
+    const char* p = std::strstr(g_device_props.deviceName, "Adreno");
+    if (!p) return false;
+    while (*p && !(*p >= '0' && *p <= '9')) p++;
+    return *p >= '1' && *p <= '6';
+}
 bool is_adreno_8xx() {
     const char* p = std::strstr(g_device_props.deviceName, "Adreno");
     if (!p) return false;
@@ -646,6 +653,7 @@ struct PresentTimer {
 }  // namespace
 
 uint64_t draw_take_dump_request();          // nvn_draw.cpp
+bool draw_take_dump_once();                 // nvn_draw.cpp: dump_fs asked for this submit's
 
 namespace {
 std::shared_ptr<const DeferredValues> g_deferred;  // the submit being replayed (replay thread only)
@@ -699,7 +707,9 @@ void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_
         end_and_wait(VK_NULL_HANDLE, VK_NULL_HANDLE);
     draw_end_submit();  // not waited for: snapshots only (the write-backs went with the submit)
     gpu_profile_collect(), zero_draws_collect();
-    debug_dump_requested(draw_take_dump_request());  // reads back in a submit of its own, which it waits for
+    const uint64_t dump_n = draw_take_dump_request();  // reads back in a submit of its own, which it waits for
+    if (draw_take_dump_once()) debug_dump_textures(dump_n);
+    else debug_dump_requested(dump_n);
     const FrameTimes f2 = frame_times();
     g_timing.encode_ns += f2.encode_ns - f_in.encode_ns, g_timing.fence_ns += f2.fence_ns - f_in.fence_ns;
     g_timing.submit_ns += plat::monotonic_ns() - t_in;
