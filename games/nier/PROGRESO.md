@@ -56,7 +56,7 @@ private/build/importer/nximport.exe --exefs --title 010056B015FE8000 --out priva
   "$D/NieRAutomata The End of YoRHa Edition [010056B015FE8000][USA][v0].xci" \
   "$D/NieRAutomata The End of YoRHa Edition [010056B015FE8800][v131072][US][Up v1.0.3].nsp"
 # 2. recompilar la CPU (~95 s main, ~40 s sdk)
-$P -m recomp private/nier/exefs/main private/nier/gen/main --name main --base 0x4000000000
+$P -m recomp private/nier/exefs/main private/nier/gen/main --name main --base 0x4000000000 --hookable 9bf1d0,8fc7a8
 $P -m recomp private/nier/exefs/sdk  private/nier/gen/sdk  --name sdk  --base 0x4010000000
 # 3. shaders
 $P games/p5r/tools/cpk.py private/nier/extract/romfs/data000.cpk --extract private/nier/extract/cpk --grep shader
@@ -206,12 +206,19 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     de verdad: mantener esas regiones en la GPU entre envíos (búfer persistente copiado al acabar cada envío, `before`
     rellenado al aplicar el write-back anterior) y lanzar el dispatch indirecto desde un búfer de GPU
     (`vkCmdDispatchIndirect`) en vez de leer los argumentos en la CPU.
-23. **60 fps: la lógica de NieR avanza un paso fijo por frame.** El juego pide intervalo 2 al crear la ventana y el
-    lanzador (`NX_FPS_CAP`) no lo cambia en NieR (lo de `frame_time_probe` es de Wonder y aquí no actúa). Nuevo
-    `NX_PRESENT_INTERVAL=1` (diagnóstico, `runs/fps_i1` contra `fps_i2`, volcados cada 20 s de tiempo real): 55,5 fps,
-    pero el texto del arranque y el título van al **doble de velocidad** (a los 20 s, 21 líneas contra 7). Para 60 fps
-    reales hay que encontrar la variable del paso de tiempo del motor (como el setter de P5R en su `game.cpp`) y
-    ponerla a 60; con ella también se podría bajar en los móviles lentos para que no vaya a cámara lenta.
+23. **60 fps y cámara lenta: HECHO** (`games/nier/game.cpp`). El bucle principal (`main+591100`) llama en cada frame
+    al gestor de tiempo `main+8fc7a8` y al setter del modo vsync del motor `main+9bf1d0` con 1. El modo vive en el
+    presentador (`*(main+0x12c1c48)+0x504`) y la presentación (`main+9baa54`) lo aplica al cambiar: 0 = intervalo 1
+    (60 fps), 1 = intervalo 2 (30 fps, el de Switch). El gestor de tiempo mide el frame (`+0xbc`, ms) y fija la
+    velocidad del juego (`+0xb0`, en frames de 60 fps) = tiempo medio / 16,67 ms **limitada a 1,0..2,0**: a 60 fps da
+    1,0 (el motor ya funciona bien a 60) y por debajo de 30 fps se queda en 2,0 (por eso a 15 fps iba a media
+    velocidad). Las dos llamadas pasan por la tabla de funciones (nuevo `--hookable` del recompilador) y se enganchan:
+    con `NX_FPS_CAP=60` (la opción del lanzador) o `NX_NIER_FPS=60` el modo pasa a 0; cuando la velocidad toca el tope
+    de 2,0, se usa el tiempo del último frame hasta `NX_NIER_MAX_STEP` (4,0 por defecto: compensa hasta 15 fps; 2 = el
+    del juego). Medido en PC: 60,0 fps con velocidad 1,0 (`runs/st60`); a 15 fps simulados (`NX_PRESENT_INTERVAL=4`)
+    la velocidad sube a ~3,75 y el prólogo avanza a la par que a 30 fps (`runs/slow_cmp.png`: con el tope 2,0 va
+    claramente por detrás). Ojo: el texto animado del arranque va por frames (a 60 fps se escribe el doble de rápido);
+    es interfaz, no la lógica. Pendiente: probarlo en la tablet y vigilar fallos de física con pasos de hasta 4,0.
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 

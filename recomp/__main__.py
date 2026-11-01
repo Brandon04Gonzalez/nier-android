@@ -47,6 +47,8 @@ def main():
     ap.add_argument("--name", default="main")
     ap.add_argument("--base", default="0x4000000000")
     ap.add_argument("--only", nargs="*", default=None, help="only these function addresses (debug)")
+    ap.add_argument("--hookable", default="", help="comma-separated function offsets whose calls go through the table "
+                    "(so the runtime can hook them)")
     args = ap.parse_args()
     base = int(args.base, 0)
     name = args.name
@@ -57,7 +59,7 @@ def main():
     print(f"analysis: {len(an.functions)} functions, {len(an.jump_tables)} jump tables ({time.time() - t:.1f}s)")
 
     os.makedirs(args.out, exist_ok=True)
-    e = emit.Emitter(an, prefix=name)
+    e = emit.Emitter(an, prefix=name, hookable=[int(x, 16) for x in args.hookable.split(",") if x])
     funcs = an.functions
     if args.only:
         want = {int(x, 16) for x in args.only}

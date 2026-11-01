@@ -138,8 +138,9 @@ from .emit_neon_wide import NeonWideOps  # noqa: E402
 
 
 class Emitter(ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps):
-    def __init__(self, an, prefix="sub"):
+    def __init__(self, an, prefix="sub", hookable=()):
         self.an = an
+        self.hookable = set(hookable)  # functions whose direct calls go through the table anyway
         self.m = an.module
         self.cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
         self.cs.detail = True
@@ -380,7 +381,9 @@ class Emitter(ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps):
             self.setjmp_sites.append(i.address + 4)
             self.labels.add(i.address + 4)
             return f"js_[{k}].save(c); c.x[0] = 0;"
-        call = f"{self.fn(t)}(c);" if t in self.entries else f"nx::call(c, {B} + {t:#x}ull);"
+        # --hookable targets go through the function table, so the runtime can hook them (hook_function).
+        direct = t in self.entries and t not in self.hookable
+        call = f"{self.fn(t)}(c);" if direct else f"nx::call(c, {B} + {t:#x}ull);"
         return f"c.x[30] = {B} + {i.address + 4:#x}ull; {call}"
 
     def i_blr(self, f, i, ops):

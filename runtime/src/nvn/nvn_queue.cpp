@@ -329,7 +329,8 @@ void WindowInitialize(CPU& c) {  // NVNboolean (NVNwindow*, const NVNwindowBuild
     if (w.active <= 0 || w.active > n) w.active = n;
     w.interval = int(driver(c, "nvnWindowBuilderGetPresentInterval", {builder}));
     if (int forced = forced_present_interval()) w.interval = forced;
-    log("nvn: window %llx: %d textures (%d active), present interval %d", (unsigned long long)guest, n, w.active, w.interval);
+    log("nvn: window %llx: %d textures (%d active), present interval %d (from %s)", (unsigned long long)guest, n, w.active,
+        w.interval, describe(c.x[30]).c_str());
     c.x[0] = 1;
 }
 
