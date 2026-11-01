@@ -56,7 +56,7 @@ private/build/importer/nximport.exe --exefs --title 010056B015FE8000 --out priva
   "$D/NieRAutomata The End of YoRHa Edition [010056B015FE8000][USA][v0].xci" \
   "$D/NieRAutomata The End of YoRHa Edition [010056B015FE8800][v131072][US][Up v1.0.3].nsp"
 # 2. recompilar la CPU (~95 s main, ~40 s sdk)
-$P -m recomp private/nier/exefs/main private/nier/gen/main --name main --base 0x4000000000 --hookable 9bf1d0,8fc7a8
+$P -m recomp private/nier/exefs/main private/nier/gen/main --name main --base 0x4000000000 --hookable 9bf1d0,8fc7a8,9d514c
 $P -m recomp private/nier/exefs/sdk  private/nier/gen/sdk  --name sdk  --base 0x4010000000
 # 3. shaders
 $P games/p5r/tools/cpk.py private/nier/extract/romfs/data000.cpk --extract private/nier/extract/cpk --grep shader
@@ -303,6 +303,31 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     | 8,0 | 1280x720 `fs 2ac0161dd586fd88` (5 draws, 1,3k vértices): pantalla completa (¿mar/niebla?) |
     | 7,0 | mapa de sombras 2048x2048 (92 draws, 193k vértices); "Sombras: desactivadas" del lanzador lo quita |
     | 3,4 | compute `a686f64415f6841a` |
+
+29. **Naves y enemigos negros: ARREGLADO** (`games/nier/game.cpp`, gancho de `main+9d514c`; recompilar `main` con
+    `--hookable 9bf1d0,8fc7a8,9d514c`). Cómo se encontró:
+    - Instantáneas draw a draw del pase de color en vuelo (`NX_SNAP_FOLLOW=3be06d89029de5d4@f5400`, `runs/sf2`): justo
+      después del primer draw (el mar) las naves ya son siluetas negras. El mar falla el test de profundidad donde el
+      z-prepass (`vs 33017dd2…`, objetivo R32F `…6d60`) puso las naves y queda el negro del clear. En el pase de color
+      **no hay ningún draw de las naves**.
+    - Sus draws de color son indirectos (`fs ca95d86f…`, el material con las sondas de luz; y `fs e0308bb1…`): cada
+      objeto es `SetRenderEnableConditional` (su consulta de oclusión del z-prepass) + 1–4 `DrawElementsIndirect`
+      cuyos registros valen `{0 1 0 0 0}`: **count 0**. Los registros salen de una plantilla estática de 60000 bytes
+      (`0x110c50200`) que se copia cada frame con `CopyBufferToBuffer` a `0x110c5ec60`. Comprobado que nada escribe
+      jamás esos counts: ni la CPU (watchpoint por hardware en el puntero de host, `NX_WATCH_LIVE` + archivo `watch`;
+      ojo, hay que dar la dirección de **host**, no la de GPU), ni ningún comando reproducido (`NX_WATCH_CMDS`,
+      nuevo: dispatches, clears, copias, informes, `UpdateUniformBuffer`), ni ningún compute (ninguno se descarta:
+      ahora se avisa de dispatches sin shader o indirectos con argumentos a 0). En la Switch algo que no emulamos los
+      rellena (no se ha encontrado qué).
+    - `main+9d514c` dibuja un rango de una malla: instanciado si tiene ≥ 2 instancias; por la ruta de culling en GPU
+      si sus parámetros (`x4`) llevan ese búfer (`+0x10` distinto de 0 y `+0x18[+0x28]` no nulo → `main+9c64a4`,
+      registro en `+0x48` de la estructura de culling); si no, un `DrawElements` normal con el count que conoce la CPU
+      (`main+9c5d1c`). El gancho pone `+0x10` a 0 durante la llamada: siempre la ruta directa.
+      `NX_NIER_GPU_CULLING=1` vuelve a la del juego.
+    - Resultado: naves blancas con su sombreado y enemigos grises en PC (`runs/ship1`) y tablet (`tab_runs/playS`).
+      Coste: ahora sí se dibujan (material pesado, sin culling: la oclusión condicional está apagada, `NX_OCCL`). PC
+      ~18 fps en vuelo (antes ~25 con las naves sin dibujar); tablet 12–16 fps, GPU ~78 ms/frame en la escena del
+      láser. Diagnósticos nuevos: `NX_TRACE_INDIRECT=<draw>|f<frame>`, `NX_TRACE_INDIRECT_CALLERS=<n>`.
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 

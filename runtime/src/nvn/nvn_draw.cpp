@@ -321,7 +321,21 @@ void dispatch(VkCommandBuffer cb, const Cmd& c) {
     if (shaders)
         for (const ShaderInfo* s : *shaders)
             if (s->stage == ShaderStage::Compute) cs = s;
-    if (!cs) return;
+    if (!cs) {
+        static uint64_t dropped = 0;
+        if ((dropped++ & (dropped - 1)) == 0) {  // 1, 2, 4, ...: the program and the storage it would have written
+            std::string r;
+            for (int k = 0; k < 16; k++)
+                if (const Range& s = g_state.storage[5][k]; s.address) {
+                    char b[64];
+                    std::snprintf(b, sizeof b, " s%d=%llx+%llu", k, (unsigned long long)s.address, (unsigned long long)s.size);
+                    r += b;
+                }
+            log("nvn: dispatch %llu without a compute shader (program %llx, %s)%s", (unsigned long long)dropped,
+                (unsigned long long)g_state.stage_programs[5], shaders ? "no compute stage" : "unknown program", r.c_str());
+        }
+        return;
+    }
     uint32_t x = uint32_t(c.i[0]), y = uint32_t(c.i[1]), z = uint32_t(c.i[2]);
     const uint8_t* args = c.n == 1 ? guest_bytes(c.a[0]) : nullptr;  // indirect: {x, y, z}
     if (c.n == 1 && !args) return;
@@ -331,7 +345,21 @@ void dispatch(VkCommandBuffer cb, const Cmd& c) {
     bool gpu_args = args && !written_separate() && written_overlaps(args, 12);
     if (args && !gpu_args) frame_guest_read(args, 12, kReadIndirect);  // deferred write-backs over them land first
     if (args && !gpu_args) std::memcpy(&x, args, 4), std::memcpy(&y, args + 4, 4), std::memcpy(&z, args + 8, 4);
-    if (!gpu_args && (!x || !y || !z)) return;
+    if (!gpu_args && (!x || !y || !z)) {
+        static uint64_t empty = 0;
+        if (args && (empty++ & (empty - 1)) == 0) {  // indirect with zero arguments in guest memory: what it would write
+            std::string r;
+            for (int k = 0; k < 16; k++)
+                if (const Range& s = g_state.storage[5][k]; s.address) {
+                    char b[64];
+                    std::snprintf(b, sizeof b, " s%d=%llx+%llu", k, (unsigned long long)s.address, (unsigned long long)s.size);
+                    r += b;
+                }
+            log("nvn: indirect dispatch %llu with zero arguments at %llx skipped: cs %s%s", (unsigned long long)empty,
+                (unsigned long long)c.a[0], cs->hash.c_str(), r.c_str());
+        }
+        return;
+    }
     trace_compute_once(cs, x, y, z);  // 0, 0, 0 for GPU arguments
     trace_nan_dispatch(cs);
     std::vector<const ShaderInfo*> stages{cs};
@@ -1246,6 +1274,27 @@ bool draw_indirect_call(VkCommandBuffer cb, const Targets& t, const Cmd& c) {
     frame_guest_read(rec, bytes, kReadIndirect);
     int32_t v[5] = {};
     std::memcpy(v, rec, bytes);
+    // NX_TRACE_INDIRECT=<first draw>|f<first frame>: the next 300 indirect draws read from guest memory, their records
+    // and shaders.
+    static const char* trace_env = std::getenv("NX_TRACE_INDIRECT");
+    static const bool by_frame = trace_env && trace_env[0] == 'f';
+    static const uint64_t trace_from = trace_env ? std::strtoull(trace_env + (by_frame ? 1 : 0), nullptr, 10) : 0;
+    static int traced = 0;
+    if (trace_env && (by_frame ? g_frame.load() : g_stats.done) >= trace_from && traced < 300) {
+        traced++;
+        const ShaderInfo* vs = nullptr;
+        const ShaderInfo* fs = nullptr;
+        std::vector<const ShaderInfo*> combined;
+        if (const auto* shaders = bound_graphics_shaders(combined))
+            for (const ShaderInfo* s : *shaders) {
+                if (s->stage == ShaderStage::Vertex) vs = s;
+                if (s->stage == ShaderStage::Fragment) fs = s;
+            }
+        log("indirect: after draw %llu record %llx {%d %d %d %d %d} written %d vs %s fs %s target %llx",
+            (unsigned long long)g_stats.done, (unsigned long long)c.a[1], v[0], v[1], v[2], v[3], v[4],
+            int(written_overlaps(rec, bytes)), vs ? vs->hash.c_str() : "-", fs ? fs->hash.c_str() : "-",
+            (unsigned long long)(t.color_count ? t.colors[0] : 0));
+    }
     if (v[0] <= 0 || v[1] <= 0) return false;  // nothing to draw (a culled object)
     if (indexed) ends[c.a[1]] = std::max(ends[c.a[1]], uint32_t(v[0]) + uint32_t(std::max(0, v[2])));
     Cmd d = c;

@@ -26,6 +26,9 @@
 #include "platform.h"
 
 namespace nx::nvn {
+namespace replay {
+const uint8_t* guest_bytes(uint64_t gpu);  // nvn_draw.cpp
+}
 
 namespace {
 
@@ -263,6 +266,8 @@ void DrawArraysInstanced(CPU& c) {
 
 void dropouts_draw(CPU& c, uint64_t index_address, uint32_t count);
 
+std::unordered_map<uint64_t, int32_t> g_direct_counts;  // NX_TRACE_INDIRECT_CALLERS: index buffer -> last direct count
+
 void draw_elements(CPU& c, int32_t base_vertex, int32_t base_instance, int32_t instances) {
     g_recorded_draws++;
     Cmd cmd{Cmd::DrawElements};
@@ -273,6 +278,8 @@ void draw_elements(CPU& c, int32_t base_vertex, int32_t base_instance, int32_t i
     cmd.i[1] = base_vertex, cmd.i[2] = base_instance, cmd.i[3] = instances;
     record(c.x[0], cmd);
     dropouts_draw(c, cmd.a[0], uint32_t(cmd.i[0]));
+    static const bool callers = std::getenv("NX_TRACE_INDIRECT_CALLERS") != nullptr;
+    if (callers) g_direct_counts[cmd.a[0]] = cmd.i[0];
 }
 
 // NX_DROPOUTS=1 (PROGRESO 68): indexed draws that the game sent for several frames running, then left out for 1..60
@@ -397,6 +404,18 @@ void DrawElements(CPU& c) { draw_elements(c, 0, 0, 1); }
 // their depth pre-pass was drawn). The replay turns them into plain draws (nvn_draw_state.cpp).
 void DrawElementsIndirect(CPU& c) {
     g_recorded_draws++;
+    // NX_TRACE_INDIRECT_CALLERS=1: where the first 20 calls come from, with their record.
+    // =<n>: the 20 after the first n with a zero count.
+    static const char* callers = std::getenv("NX_TRACE_INDIRECT_CALLERS");
+    static const uint64_t skip = callers ? std::strtoull(callers, nullptr, 10) : 0;
+    static uint64_t called = 0;
+    if (callers && called < skip + 20) {
+        const int32_t* r = reinterpret_cast<const int32_t*>(replay::guest_bytes(c.x[4]));
+        if (r && r[0] == 0 && called++ >= skip)
+            log("DrawElementsIndirect from %s: index %llx record %llx {%d %d %d %d %d}, direct draws of that index "
+                "buffer: %d", describe(c.x[30]).c_str(), (unsigned long long)c.x[3], (unsigned long long)c.x[4], r[0],
+                r[1], r[2], r[3], r[4], g_direct_counts.count(c.x[3]) ? g_direct_counts[c.x[3]] : -1);
+    }
     Cmd cmd{Cmd::DrawElementsIndirect};
     cmd.n = uint32_t(c.x[1]), cmd.mask = uint32_t(c.x[2]), cmd.a[0] = c.x[3], cmd.a[1] = c.x[4];
     record(c.x[0], cmd);

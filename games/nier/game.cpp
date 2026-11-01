@@ -98,6 +98,26 @@ void update_hook(CPU& c) {
             double(get(0xb0)));
 }
 
+// Ships and structures came out black (PROGRESO 29). main+9d514c draws one mesh range (x4: its draw parameters, x5:
+// the index range): instanced when it has 2+ instances, else through the GPU-culling path when the parameters carry
+// that buffer (+0x10 set and +0x18[+0x28] not null: main+9c64a4, DrawElementsIndirect from a record at the culling
+// struct's +0x48), else a plain DrawElements with the count the CPU knows (main+9c5d1c). The records are a static
+// template copied in every frame with CopyBufferToBuffer ({0 1 0 0 0}: count 0) and nothing we replay ever writes
+// their counts, so those draws drew nothing: in the colour pass the sea failed the depth test where the depth
+// prepass had put the ships and their pixels kept the target's black clear. The hook clears +0x10 for the call: the
+// plain draw, every frame (no GPU culling; the occlusion queries' conditional rendering still applies).
+// NX_NIER_GPU_CULLING=1: the game's own path.
+uint64_t g_mesh_draw = 0;
+
+void mesh_draw_hook(CPU& c) {
+    static const bool own = [] { const char* e = std::getenv("NX_NIER_GPU_CULLING"); return e && e[0] == '1'; }();
+    const uint64_t params = c.x[4];
+    const uint32_t culling = params && !own ? ld<uint32_t>(params + 0x10) : 0;
+    if (culling) st<uint32_t>(params + 0x10, 0);
+    call(c, g_mesh_draw);
+    if (culling) st<uint32_t>(params + 0x10, culling);
+}
+
 }  // namespace
 
 NX_HLE("fputs", fputs_logged);
@@ -121,6 +141,7 @@ void game::after_init() {
     g_update = hook_function(m->base + 0x8fc7a8, update_hook);
     if (!g_vsync_setter || !g_update) log("nier: frame-rate hooks not installed (%llx %llx)", (unsigned long long)g_vsync_setter,
                                           (unsigned long long)g_update);
+    if (!(g_mesh_draw = hook_function(m->base + 0x9d514c, mesh_draw_hook))) log("nier: mesh draw hook not installed");
 }
 
 }  // namespace nx

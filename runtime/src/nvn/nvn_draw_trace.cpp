@@ -86,7 +86,26 @@ bool trace_nan_on() {
 }
 }  // namespace
 
+void watch_write(uint64_t address, uint64_t size, const char* what) {
+    static const char* env = std::getenv("NX_WATCH_CMDS");
+    if (!env || !address || !size) return;
+    static uint64_t lo = 0, hi = 0;
+    static const bool parsed = std::sscanf(env, "%llx-%llx", (unsigned long long*)&lo, (unsigned long long*)&hi) == 2;
+    static int logged = 0;
+    static const uint64_t from = std::getenv("NX_WATCH_CMDS_FROM") ? std::strtoull(std::getenv("NX_WATCH_CMDS_FROM"), nullptr, 10) : 0;
+    if (!parsed || address >= hi || address + size <= lo || g_frame < from || logged++ >= 400) return;
+    int32_t v[5] = {};
+    if (const uint8_t* g = guest_bytes(std::max(address, lo))) std::memcpy(v, g, sizeof v);
+    log("watch: %s %llx+%llu after draw %llu, frame %llu; at %llx (host %p): %d %d %d %d %d", what,
+        (unsigned long long)address, (unsigned long long)size, (unsigned long long)g_stats.done,
+        (unsigned long long)g_frame.load(), (unsigned long long)std::max(address, lo),
+        (const void*)guest_bytes(std::max(address, lo)), v[0], v[1], v[2], v[3], v[4]);
+}
+
 void trace_nan_dispatch(const ShaderInfo* cs) {
+    static const bool watching = std::getenv("NX_WATCH_CMDS") != nullptr;
+    for (int k = 0; k < 16 && watching; k++)
+        if (const Range& r = g_state.storage[5][k]; r.address) watch_write(r.address, r.size, ("cs " + cs->hash).c_str());
     static const bool c8 = std::getenv("NX_TRACE_C8") != nullptr;  // each compute dispatch's storage ranges (and uniform c3..)
     static int dispatches = 0;
     static std::map<std::string, uint64_t> seen;

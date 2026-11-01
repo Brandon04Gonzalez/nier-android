@@ -75,6 +75,9 @@ std::string explain_texture_slot(uint64_t handle);  // NX_FRAME_SIG: the slot at
 bool snap_follow(const Targets& t, const ShaderInfo* vs, const ShaderInfo* fs, const std::vector<uint64_t>& handles);
 // NX_TRACE_NAN=1 (nvn_draw_trace.cpp): non-finite or huge floats in what compute shaders wrote, with the shader.
 void trace_nan_dispatch(const ShaderInfo* cs);
+// NX_WATCH_CMDS=<hex lo>-<hex hi>: logs the replayed commands that write guest memory in that range (dispatch storage,
+// buffer clears/copies, reports); `what` names the command.
+void watch_write(uint64_t address, uint64_t size, const char* what);
 void trace_nan_write_back(const uint8_t* from, const uint8_t* to, uint64_t size);
 // NX_TRACE_PASSES=<first draw> (nvn_draw_trace.cpp): 4000 pass events from that draw on (begin with its load ops,
 // end with its reason, clears deferred or done in the pass), each with its colour target 0 and depth.

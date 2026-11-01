@@ -124,6 +124,7 @@ void draw_command(VkCommandBuffer cb, const Cmd& c, const CmdList& list, const T
                     (unsigned long long)g_stats.done, (unsigned long long)c.a[0], (unsigned long long)c.a[1],
                     (unsigned long long)off, b.size(), f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
             }
+            if (c.blob < list.blobs.size()) watch_write(c.a[0] + off, list.blobs[c.blob].size(), "UpdateUniformBuffer");
             if (c.blob < list.blobs.size())
                 if (uint8_t* p = const_cast<uint8_t*>(guest_bytes(c.a[0] + off))) {
                     std::memcpy(p, list.blobs[c.blob].data(), list.blobs[c.blob].size());
@@ -135,6 +136,7 @@ void draw_command(VkCommandBuffer cb, const Cmd& c, const CmdList& list, const T
         case Cmd::ResetCounter: occlusion_reset(cb, c, targets); break;
         case Cmd::RenderConditional: occlusion_conditional(cb, c, targets); break;
         case Cmd::ReportCounter: {  // {value, timestamp}: the work before it is done when the replay gets here
+            watch_write(c.a[0], 16, "ReportCounter");
             occlusion_report(cb, c, targets);
             static uint64_t reports = 0, types_seen = 0;
             if (c.n < 64 && !(types_seen >> c.n & 1)) types_seen |= 1ull << c.n, log("nvn: first counter report of type %u", c.n);
@@ -166,9 +168,10 @@ void draw_command(VkCommandBuffer cb, const Cmd& c, const CmdList& list, const T
         case Cmd::DrawElements: draw_call(cb, targets, c.n, true, c); break;
         case Cmd::DrawElementsIndirect:
         case Cmd::DrawArraysIndirect: draw_indirect_call(cb, targets, c); break;
-        case Cmd::ClearBuffer: written_clear_buffer(cb, guest_bytes(c.a[0]), c.a[1], c.n); break;
-        case Cmd::CopyBufferToBuffer: written_copy_buffer(cb, guest_bytes(c.a[0]), guest_bytes(c.a[1]), c.a[2]); break;
+        case Cmd::ClearBuffer: watch_write(c.a[0], c.a[1], "ClearBuffer"); written_clear_buffer(cb, guest_bytes(c.a[0]), c.a[1], c.n); break;
+        case Cmd::CopyBufferToBuffer: watch_write(c.a[1], c.a[2], ("CopyBufferToBuffer from " + std::to_string(c.a[0])).c_str()); watch_write(c.a[0], c.a[2], ("CopyBufferToBuffer source to " + std::to_string(c.a[1])).c_str()); written_copy_buffer(cb, guest_bytes(c.a[0]), guest_bytes(c.a[1]), c.a[2]); break;
         case Cmd::ReportValue:
+            watch_write(c.a[0], 4, "ReportValue");
             if (uint8_t* p = const_cast<uint8_t*>(guest_bytes(c.a[0]))) {
                 std::memcpy(p, &c.n, 4);
                 dedup_invalidate(p, 4);
