@@ -1,6 +1,6 @@
 # Port nativo de NieR:Automata a Android — progreso
 
-Última actualización: 2026-11-01 (sesión 4)
+Última actualización: 2026-11-02 (sesión 5)
 
 ## Estado en una línea
 
@@ -342,6 +342,15 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     sigue a 1,0). Tablet, misma ruta de juego: **13,1 → 17,3 fps de media** (`tab_runs/playF`), 3D a 768x432 reescalado
     por el juego (más suave; interfaz nítida).
 
+### Sesión 5 (2026-11-02)
+
+31. **Comprobaciones y lanzador.** El usuario confirma que los objetos conservan el color también más adelante (las
+    "zonas negro/blanco" eran lo mismo que las naves negras, punto 29). **Películas en Android: funcionan**: el
+    `AMediaCodec` usa el VP9 por hardware del Snapdragon (`c2.qti.vp9.decoder`, 1600x904, NV12) a ~30 fps; los logos
+    de Square Enix y PlatinumGames se ven bien (`tab_runs/film1`). En PC siguen sin VP9. El lanzador ofrece
+    "Resolución dinámica mínima" (`NX_NIER_MIN_SCALE`: 50 %, **60 %** por defecto, 70 % o 83 %, el mínimo del juego).
+    `tab_play.sh`/`tab_menu.sh` ya no tocan la tablet si NieR está en primer plano (el usuario puede estar jugando).
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |
@@ -393,12 +402,12 @@ iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
    suelo; perfil por pases en el punto 28: escena principal, z-prepass con 325k vértices, pantalla completa, sombras
    2048²). Ideas: medir el coste de las naves ahora que se dibujan (`fs ca95d86f…`, 6.326 líneas de SPIR-V), sombras
    a 1024², posproceso a media resolución con `GRAPHICS=low`. El menú de carga ya va a 28 fps (tope 30).
-3. Zonas en negro y blanco "más adelante" (punto 17, las vio el usuario): sin reproducir; quizá eran estructuras
-   negras como las naves (punto 29). Comprobar jugando.
-4. Películas: en PC salen verdes/negras (sin VP9); comprobar en Android (`AMediaCodec`).
+3. ~~Zonas en negro y blanco~~: eran las naves/estructuras negras (punto 29; confirmado por el usuario, punto 31).
+4. Películas: en Android funcionan (punto 31); en PC salen verdes/negras (sin decodificador VP9).
 5. Preparación de datos en el teléfono sin PC (como P5R v0.4): extractor de shaders DAT en C++.
-6. El lanzador aún no ofrece `NX_NIER_MIN_SCALE` (suelo de la resolución dinámica; se puede poner en `config.txt`).
-   Hay cambios sin confirmar de otra sesión en `Launcher.java`, `AndroidManifest.xml` y `LogProvider.java`: no tocados.
+6. ~~Opción del lanzador para `NX_NIER_MIN_SCALE`~~ (punto 31). Hay cambios sin confirmar de otra sesión en
+   `Launcher.java` (compartir registros como archivo), `AndroidManifest.xml` y `LogProvider.java`: no incluidos en los
+   commits, pero sí en los APK compilados desde este árbol.
 7. Otros ports y la guía de P5R: **P4G** ya la tenía (v0.2.0, `7c3fcdc`, otra sesión). **P4AU**: arreglos de runtime
    traídos en la sesión 1 (`c355cbb`, ver su PROGRESO; faltan mods/`hle_fs.cpp` y las opciones del lanzador).
    **Persona Q/Q2** (3DS, runtime zakuro) los actualiza otra sesión: no tocados.
