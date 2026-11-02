@@ -323,7 +323,7 @@ void dispatch(VkCommandBuffer cb, const Cmd& c) {
             if (s->stage == ShaderStage::Compute) cs = s;
     if (!cs) {
         static uint64_t dropped = 0;
-        if ((dropped++ & (dropped - 1)) == 0) {  // 1, 2, 4, ...: the program and the storage it would have written
+        if (const uint64_t n = ++dropped; (n & (n - 1)) == 0) {  // 1, 2, 4, ...: the program and the storage it would have written
             std::string r;
             for (int k = 0; k < 16; k++)
                 if (const Range& s = g_state.storage[5][k]; s.address) {
@@ -347,7 +347,7 @@ void dispatch(VkCommandBuffer cb, const Cmd& c) {
     if (args && !gpu_args) std::memcpy(&x, args, 4), std::memcpy(&y, args + 4, 4), std::memcpy(&z, args + 8, 4);
     if (!gpu_args && (!x || !y || !z)) {
         static uint64_t empty = 0;
-        if (args && (empty++ & (empty - 1)) == 0) {  // indirect with zero arguments in guest memory: what it would write
+        if (const uint64_t n = ++empty; args && (n & (n - 1)) == 0) {  // indirect with zero arguments in guest memory: what it would write
             std::string r;
             for (int k = 0; k < 16; k++)
                 if (const Range& s = g_state.storage[5][k]; s.address) {
@@ -401,15 +401,24 @@ void vertex_read_barrier(VkCommandBuffer cb, const ShaderInfo* vs) {
 }
 
 // NX_SHADOWS=0 (the launcher's "Sombras: desactivadas"): no draws into shadow maps, the square depth-only targets of
-// 512 or more (P5R: 2048 and 1024, D32). Their clears stay: the maps say "lit" everywhere.
+// 512 or more (P5R: 2048 and 1024, D32). Their clears stay: the maps say "lit" everywhere. NieR's 2048x2048 map also
+// writes one colour target of its size (format 0xfa): a single 2D colour target as large as the square depth counts
+// too (not a cube face: the environment maps are drawn into those).
 bool shadow_draw_skipped(const Targets& t) {
     static const bool off = [] {
         const char* e = std::getenv("NX_SHADOWS");
         return e && e[0] == '0';
     }();
-    if (!off || !depth_only(t)) return false;
+    if (!off || !t.depth) return false;
     const GpuImage* d = image_of(t.depth);
-    return d && d->width == d->height && d->width >= 512 && !(d->aspect & VK_IMAGE_ASPECT_STENCIL_BIT);
+    if (!d || d->width != d->height || d->width < 512 || (d->aspect & VK_IMAGE_ASPECT_STENCIL_BIT)) return false;
+    if (depth_only(t)) return true;
+    uint32_t colours = 0;
+    const GpuImage* c = nullptr;
+    for (uint32_t k = 0; k < t.color_count; k++)
+        if (t.colors[k]) colours++, c = image_of(t.colors[k]);
+    return colours == 1 && c && c->width == d->width && c->height == d->height && c->layers == 1 &&
+           c->view_type == VK_IMAGE_VIEW_TYPE_2D;
 }
 
 // NX_DISABLE_BLOOM=1 (the launcher's "Post-procesado: desactivado"): no draws into bloom/blur mip chains.

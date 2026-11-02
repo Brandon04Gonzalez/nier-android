@@ -374,6 +374,21 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     los draws `e0308bb1…`. Si se quiere recuperar fps: optimizar ese fs (precisión media/fp16 en Adreno, lecturas del
     SSBO, una variante barata con `GRAPHICS=low`) y su vs `e6d9c4b4…`.
 
+34. **Opciones para recuperar fps, probadas en la tablet** (misma ruta; base 14,9 fps, `tab_runs/cullTA`):
+    | opción | fps | resultado |
+    |---|---|---|
+    | `spirv-opt -O` al fs de las naves (SSA, código muerto; 1980 → 144 lecturas de variables) | 14,9 | sin efecto: el compilador del Adreno ya lo hacía |
+    | `--relax-float-ops` (RelaxedPrecision, fp16 en Adreno) a ese fs | — | **cuelga la GPU** (`GPU hang`): descartado |
+    | suelo de resolución 0,5 (`NX_NIER_MIN_SCALE`, opción del lanzador) | **16,4** | +10 %, imagen más suave |
+    | "Sombras: desactivadas" (`NX_SHADOWS=0`) antes de este arreglo | 15,1 | no hacía nada en NieR |
+    El SSBO del fs solo se lee 5 veces (pasarlo a UBO no daría casi nada) y una variante barata hecha a mano no
+    compensa. **Sombras desactivadas arregladas** (`nvn_draw.cpp`, `shadow_draw_skipped`): el mapa 2048² de NieR
+    escribe también un destino de color de su tamaño (formato 0xfa), y la regla solo saltaba pases sin color. Ahora
+    también salta los de un único color 2D del mismo tamaño que la profundidad cuadrada (los cubemaps de entorno no).
+    PC: el pase deja de aparecer en el perfil (antes 100 draws y 224k vértices por frame) y la imagen sale bien
+    (`runs/shdpc`). En la tablet ese pase costaba ~7,3 ms (punto 32); **falta medirlo allí**: la pantalla se había
+    apagado y bloqueado (`mWakefulness=Dozing`; NieR no arranca sin ventana y las capturas salen negras).
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |
@@ -436,3 +451,8 @@ iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
 8. ~~`p5r-main` y el `switch` perdido~~: arreglado allí por otra sesión (`platform_android_input.cpp` igual que en
    `nier`; `p5r-main` va por `5e05e70`). Su v0.5.2 trae "compartir el log como archivo" (`LogProvider`), que es lo
    que está sin confirmar en el lanzador de NieR.
+
+### 2026-11-02: Arreglo del aspecto de pantalla panorámica (16:9 vs 20:9)
+
+- `runtime/src/platform_android.cpp`: `window_size` actualizado para extraer la altura objetivo y escalar el ancho proporcionalmente al aspect ratio del dispositivo (`sw * target_h / sh`), eliminando la lectura rígida de resoluciones 16:9 (`WxH`); añadido `unsetenv("NX_STRETCH")` antes de leer `config.txt`.
+- `games/nier/java/io/github/nierrecomp/Launcher.java`: `save()` actualizado para guardar presets limpios (`"360p"`, `"480p"`, `"720p"`, `"1080p"`) en lugar de resoluciones fijas 16:9 (`1280x720`, etc.).
