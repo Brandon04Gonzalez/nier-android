@@ -351,6 +351,13 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     "Resolución dinámica mínima" (`NX_NIER_MIN_SCALE`: 50 %, **60 %** por defecto, 70 % o 83 %, el mínimo del juego).
     `tab_play.sh`/`tab_menu.sh` ya no tocan la tablet si NieR está en primer plano (el usuario puede estar jugando).
 
+32. **Perfil de GPU en vuelo con las naves dibujadas y el suelo 0,6** (`tab_runs/playP2`, 46 ms/frame en modo perfil):
+    13,7 ms el pase de color con naves/estructuras (`fs ca95d86f…`, 75 draws, 238k vértices), 8,6 ms el z-prepass
+    (238k vértices), 7,3 ms las sombras 2048² (193k vértices), 6,4 ms el resto de la escena; la pantalla completa
+    `2ac0161d…` bajó de 8 a 0,4 ms con la resolución dinámica. Lo que queda es sobre todo trabajo por vértice (~670k
+    por frame en tres pases): siguiente palanca, mirar el coste de los vertex shaders traducidos (`vs 33017dd2…`,
+    `e6d9c4b4…`) en el Adreno 610, o un mapa de sombras más pequeño.
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |
@@ -398,10 +405,9 @@ iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
 ## Falta ⚠️
 
 1. ~~Probar el APK en un dispositivo~~: probado en la tablet Lenovo TB331FC (Adreno 610) desde la sesión 2.
-2. Rendimiento en juego (tablet, vuelo): ~17 fps con el suelo 0,6; la GPU es el límite (54–78 ms/frame antes del
-   suelo; perfil por pases en el punto 28: escena principal, z-prepass con 325k vértices, pantalla completa, sombras
-   2048²). Ideas: medir el coste de las naves ahora que se dibujan (`fs ca95d86f…`, 6.326 líneas de SPIR-V), sombras
-   a 1024², posproceso a media resolución con `GRAPHICS=low`. El menú de carga ya va a 28 fps (tope 30).
+2. Rendimiento en juego (tablet, vuelo): ~17 fps con el suelo 0,6; la GPU es el límite y ahora es sobre todo
+   trabajo por vértice (punto 32). Ideas: coste de los vertex shaders traducidos en el Adreno, sombras a 1024². El
+   menú de carga ya va a 28 fps (tope 30).
 3. ~~Zonas en negro y blanco~~: eran las naves/estructuras negras (punto 29; confirmado por el usuario, punto 31).
 4. Películas: en Android funcionan (punto 31); en PC salen verdes/negras (sin decodificador VP9).
 5. Preparación de datos en el teléfono sin PC (como P5R v0.4): extractor de shaders DAT en C++.
@@ -411,4 +417,6 @@ iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
 7. Otros ports y la guía de P5R: **P4G** ya la tenía (v0.2.0, `7c3fcdc`, otra sesión). **P4AU**: arreglos de runtime
    traídos en la sesión 1 (`c355cbb`, ver su PROGRESO; faltan mods/`hle_fs.cpp` y las opciones del lanzador).
    **Persona Q/Q2** (3DS, runtime zakuro) los actualiza otra sesión: no tocados.
-8. `p5r-main` tiene el fallo de compilación de Android (`switch` perdido) sin arreglar.
+8. ~~`p5r-main` y el `switch` perdido~~: arreglado allí por otra sesión (`platform_android_input.cpp` igual que en
+   `nier`; `p5r-main` va por `5e05e70`). Su v0.5.2 trae "compartir el log como archivo" (`LogProvider`), que es lo
+   que está sin confirmar en el lanzador de NieR.
