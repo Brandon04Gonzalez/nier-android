@@ -358,6 +358,22 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
     por frame en tres pases): siguiente palanca, mirar el coste de los vertex shaders traducidos (`vs 33017dd2…`,
     `e6d9c4b4…`) en el Adreno 610, o un mapa de sombras más pequeño.
 
+33. **Cuánto cuesta dibujar las naves (punto 29), medido** (tablet, misma ruta, 133 s de juego cada corrida,
+    `tab_runs/cullTA..TD`; media ponderada por tiempo desde que acaba el menú):
+    | modo | fps | peor ventana |
+    |---|---|---|
+    | ruta del juego (`NX_NIER_GPU_CULLING=1`: naves sin dibujar, el mínimo posible) | 20,8 | 16 |
+    | **arreglo actual** (ruta directa) | **14,9** | 9 |
+    | arreglo + `NX_OCCL=1` (descarte por oclusión) | 14,8 | 9 |
+    | arreglo con el fs de las naves cambiado por uno trivial (`NX_SWAP_FS=ca95d86f…:f69e0c…`) | 17,2 | 13 |
+    PC (limitado por CPU): 22,9 → 21,3 fps. La ruta directa **no dibuja de más**: cada objeto son 4 partes de
+    material contiguas (2019/2097/2313/717 índices de 32 bits), no niveles de detalle, y el pase de color dibuja menos
+    índices que el z-prepass que elige la CPU (374k frente a 473k en los mismos frames; `NX_TRACE_DRAWS` ahora
+    escribe la dirección de índices). Es el coste de sombrear las naves, que la Switch también paga: ~19 ms/frame en
+    la tablet, la mitad el fs `ca95d86f…` (6.326 líneas de SPIR-V, sondas de luz por SSBO) y la otra mitad vértices y
+    los draws `e0308bb1…`. Si se quiere recuperar fps: optimizar ese fs (precisión media/fp16 en Adreno, lecturas del
+    SSBO, una variante barata con `GRAPHICS=low`) y su vs `e6d9c4b4…`.
+
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
 | Variante | fps | Notas |

@@ -626,9 +626,11 @@ void trace_draw(const Targets& t, uint32_t mode, bool indexed, const Cmd& c, con
             g_state.viewport[1], g_state.viewport[2], g_state.viewport[3], g_state.has_viewport, g_state.scissor[0],
             g_state.scissor[1], g_state.scissor[2], g_state.scissor[3], g_state.has_scissor, g_state.polygon.cull,
             g_state.polygon.front, g_state.depth_near, g_state.depth_far, g_state.depth.depth_test);
-        log("draw %llu: vs %s fs %s mode %u %s count %d x%d targets %u:%llx depth %llx%s", (unsigned long long)g_stats.done,
-            vs->hash.c_str(), fs ? fs->hash.c_str() : "-", mode, indexed ? "indexed" : "arrays",
-            indexed ? c.i[0] : c.i[1], c.i[3], t.color_count, (unsigned long long)t.colors[0], (unsigned long long)t.depth, tex.c_str());
+        log("draw %llu: vs %s fs %s mode %u %s count %d x%d targets %u:%llx depth %llx%s index %llx",
+            (unsigned long long)g_stats.done, vs->hash.c_str(), fs ? fs->hash.c_str() : "-", mode,
+            indexed ? "indexed" : "arrays", indexed ? c.i[0] : c.i[1], c.i[3], t.color_count,
+            (unsigned long long)t.colors[0], (unsigned long long)t.depth, tex.c_str(),
+            (unsigned long long)(indexed ? c.a[0] : 0));
     }}
 
 // NX_TRACE_SKIN=1: the first 3 draws of every vertex shader with an integer vertex input (skinned models: bone
