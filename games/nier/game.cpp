@@ -77,9 +77,27 @@ void vsync_hook(CPU& c) {
 // game ran at half speed (the slow motion on the Adreno 610). When it sits at that cap, the last frame's own time is
 // used up to NX_NIER_MAX_STEP (4.0 by default: right down to 15 fps; 2 = the game's own). NX_NIER_STEP=<x>: the speed
 // fixed (experiments); NX_NIER_TRACE_STEP=1 logs it.
+// Dynamic resolution (main+9bf3e0, once a frame, with the GPU's milliseconds: runtime NX_GPU_TIME_FEED): over 45 ms
+// twice the 3D scale drops 0.07, over 32 ms 0.01, and it climbs 0.01 under 30 ms; it stays within [min, 1], min being
+// 0.8333 (0.4 with a config flag) or the game's own override if lower (the float at *(main+0x12c7430), 1 unless the
+// game sets it: main+9bf670). At 720p that floor was 1056x594 and the Adreno 610 stays there. NX_NIER_MIN_SCALE
+// (0.3..1, default 0.6) is written into the override every frame: on a GPU that keeps up nothing changes.
+void resolution_floor() {
+    static const float floor = [] {
+        const char* e = std::getenv("NX_NIER_MIN_SCALE");
+        return std::clamp(e ? float(std::atof(e)) : 0.6f, 0.3f, 1.0f);
+    }();
+    if (const uint64_t override_min = g_main ? ld<uint64_t>(g_main + 0x12c7430) : 0) {
+        uint32_t u;
+        std::memcpy(&u, &floor, 4);
+        st<uint32_t>(override_min, u);
+    }
+}
+
 void update_hook(CPU& c) {
     const uint64_t timer = c.x[0];
     const bool adaptive = uint32_t(c.x[1]) != 0;
+    resolution_floor();
     call(c, g_update);
     static const char* fixed = std::getenv("NX_NIER_STEP");
     static const float max_step = [] {

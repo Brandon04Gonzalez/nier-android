@@ -328,6 +328,19 @@ Tablet Lenovo **TB331FC** (Snapdragon 680, **Adreno 610**, 8 GB, Android 14), AP
       Coste: ahora sí se dibujan (material pesado, sin culling: la oclusión condicional está apagada, `NX_OCCL`). PC
       ~18 fps en vuelo (antes ~25 con las naves sin dibujar); tablet 12–16 fps, GPU ~78 ms/frame en la escena del
       láser. Diagnósticos nuevos: `NX_TRACE_INDIRECT=<draw>|f<frame>`, `NX_TRACE_INDIRECT_CALLERS=<n>`.
+    - `NX_OCCL=1` (culling por oclusión en GPU del runtime, ya que NieR envuelve cada objeto en consulta + render
+      condicional): en PC funciona (21–46 % de objetos ocultos, naves bien), en la tablet no ayuda (10,6 contra 13,1
+      fps de media, `tab_runs/playO` / `playS`). Se queda apagado, como en P5R.
+
+30. **Suelo de la resolución dinámica: 0,6 (antes 0,8333)** (`games/nier/game.cpp`, `resolution_floor`). El control
+    está en `main+9bf3e0` (una vez por frame, con los ms de GPU que da `NX_GPU_TIME_FEED`): > 45 ms dos veces → −0,07;
+    > 32 ms → −0,01; previsión < 30 ms → +0,01; dentro de [mín, 1], con mín = 0,8333 (0,4 con un bit de
+    configuración) o el override del juego si es menor (float en `*(main+0x12c7430)`, 1 salvo que el juego lo fije con
+    `main+9bf670`). La altura se redondea a múltiplos de 9 (594 → escala 0,825). El viewport es tamaño del destino ×
+    escala (`main+9bf6a0`; `NX_TRACE_VIEWPORT=<ancho>`, nuevo, dice desde dónde se fija). El gancho por frame escribe
+    `NX_NIER_MIN_SCALE` (0,3–1, por defecto 0,6) en el override: con una GPU que llega a tiempo no cambia nada (PC
+    sigue a 1,0). Tablet, misma ruta de juego: **13,1 → 17,3 fps de media** (`tab_runs/playF`), 3D a 768x432 reescalado
+    por el juego (más suave; interfaz nítida).
 
 ### Pruebas de rendimiento (PC, RTX 4060, sin ventana, vuelo del prólogo, `nier-port/bench.sh`)
 
@@ -375,15 +388,18 @@ iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
 
 ## Falta ⚠️
 
-1. **Probar el APK en un dispositivo** (`private/nier/apk/nier.apk`). Copiar a `NieR Automata/` en el teléfono:
-   `analysis/` (main.bin, sdk.bin, main.npdm), `extract/romfs/` (11,6 GB) y `spirv/` (todo de `private/nier`).
-2. Rendimiento: qué vértices cambian cada frame (¿nubes/partículas escritas por la CPU, anillos dinámicos?), por qué
-   la GPU tarda 36 ms en una RTX 4060 y por qué los write-backs (0 % cambiado) cuestan 20 ms (lectura de memoria no
-   cacheada en PC). Medir en la tablet.
-3. Películas: en PC salen verdes/negras (sin VP9); comprobar en Android (`AMediaCodec`).
-4. Preparación de datos en el teléfono sin PC (como P5R v0.4): extractor de shaders DAT en C++.
-5. 60 fps: NieR no tiene parche de fps (el lanzador la marca experimental).
-6. Otros ports y la guía de P5R: **P4G** ya la tenía (v0.2.0, `7c3fcdc`, otra sesión). **P4AU**: arreglos de runtime
-   traídos en esta sesión (`c355cbb`, ver su PROGRESO; faltan mods/`hle_fs.cpp` y las opciones del lanzador).
-   **Persona Q/Q2** (3DS, runtime zakuro) los actualiza otra sesión (v0.3.3, 2026-10-31): no tocados.
-7. `p5r-main` tiene el fallo de compilación de Android (`switch` perdido) sin arreglar.
+1. ~~Probar el APK en un dispositivo~~: probado en la tablet Lenovo TB331FC (Adreno 610) desde la sesión 2.
+2. Rendimiento en juego (tablet, vuelo): ~17 fps con el suelo 0,6; la GPU es el límite (54–78 ms/frame antes del
+   suelo; perfil por pases en el punto 28: escena principal, z-prepass con 325k vértices, pantalla completa, sombras
+   2048²). Ideas: medir el coste de las naves ahora que se dibujan (`fs ca95d86f…`, 6.326 líneas de SPIR-V), sombras
+   a 1024², posproceso a media resolución con `GRAPHICS=low`. El menú de carga ya va a 28 fps (tope 30).
+3. Zonas en negro y blanco "más adelante" (punto 17, las vio el usuario): sin reproducir; quizá eran estructuras
+   negras como las naves (punto 29). Comprobar jugando.
+4. Películas: en PC salen verdes/negras (sin VP9); comprobar en Android (`AMediaCodec`).
+5. Preparación de datos en el teléfono sin PC (como P5R v0.4): extractor de shaders DAT en C++.
+6. El lanzador aún no ofrece `NX_NIER_MIN_SCALE` (suelo de la resolución dinámica; se puede poner en `config.txt`).
+   Hay cambios sin confirmar de otra sesión en `Launcher.java`, `AndroidManifest.xml` y `LogProvider.java`: no tocados.
+7. Otros ports y la guía de P5R: **P4G** ya la tenía (v0.2.0, `7c3fcdc`, otra sesión). **P4AU**: arreglos de runtime
+   traídos en la sesión 1 (`c355cbb`, ver su PROGRESO; faltan mods/`hle_fs.cpp` y las opciones del lanzador).
+   **Persona Q/Q2** (3DS, runtime zakuro) los actualiza otra sesión: no tocados.
+8. `p5r-main` tiene el fallo de compilación de Android (`switch` perdido) sin arreglar.

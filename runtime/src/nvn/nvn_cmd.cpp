@@ -364,6 +364,11 @@ void SetViewport(CPU& c) {
     static std::atomic<int> logged{0};
     if ((cmd.i[3] < 0 || cmd.i[2] < 0) && logged++ < 10)
         log("nvn: SetViewport with a negative size: %d %d %d %d", cmd.i[0], cmd.i[1], cmd.i[2], cmd.i[3]);
+    // NX_TRACE_VIEWPORT=<width>: where the first 12 viewports of that width come from.
+    static const int trace_w = std::getenv("NX_TRACE_VIEWPORT") ? std::atoi(std::getenv("NX_TRACE_VIEWPORT")) : 0;
+    static std::atomic<int> traced{0};
+    if (trace_w && cmd.i[2] == trace_w && traced++ < 12)
+        log("nvn: SetViewport %d %d %d %d from %s", cmd.i[0], cmd.i[1], cmd.i[2], cmd.i[3], describe(c.x[30]).c_str());
 }
 
 void SetScissor(CPU& c) {
