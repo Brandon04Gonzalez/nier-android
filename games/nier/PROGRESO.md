@@ -456,3 +456,17 @@ iguales); uniform/storage 502 MB (25 %). En el título: 13,7 fps.
 
 - `runtime/src/platform_android.cpp`: `window_size` actualizado para extraer la altura objetivo y escalar el ancho proporcionalmente al aspect ratio del dispositivo (`sw * target_h / sh`), eliminando la lectura rígida de resoluciones 16:9 (`WxH`); añadido `unsetenv("NX_STRETCH")` antes de leer `config.txt`.
 - `games/nier/java/io/github/nierrecomp/Launcher.java`: `save()` actualizado para guardar presets limpios (`"360p"`, `"480p"`, `"720p"`, `"1080p"`) en lugar de resoluciones fijas 16:9 (`1280x720`, etc.).
+
+### 2026-11-03: Integración de soluciones y PRs de Persona 5 Royal
+
+1. **Controladores de GPU personalizados (PR #133 / adrenotools / Turnip)**:
+   - Integrado 	hird_party/libadrenotools en CMakeLists.txt (NX_CUSTOM_DRIVER=1, enlace estático con dependencias de hooks).
+   - ndroid/build_apk.ps1: empaquetado de librerías hook (libhook_impl.so, libmain_hook.so, libfile_redirect_hook.so, libgsl_alloc_hook.so) en el APK para arm64-v8a.
+   - 
+untime/src/platform_android.cpp: open_custom_vulkan() carga el driver Turnip configurado en <files>/gpu_driver/active.txt a través de libadrenotools.
+   - games/nier/java/io/github/nierrecomp/Launcher.java: selector e importador de drivers en formato .zip / .so en la interfaz de usuario.
+2. **Arreglo de interbloqueo en sistema de archivos (Commit 5e05e70)**:
+   - 
+untime/src/hle_fs.cpp: sustitución de std::mutex g_fs; por std::recursive_mutex g_fs; para evitar bloqueos por reentrancia de hilos al acceder a archivos.
+3. **Exportación segura de registros (Commit 98004d7)**:
+   - Integrado LogProvider.java (content://io.github.nierrecomp.logprovider) y registrado en AndroidManifest.xml para compartir Download/nier-log.txt sin FileUriExposedException ni bloqueos de scoped storage en Android 7+.

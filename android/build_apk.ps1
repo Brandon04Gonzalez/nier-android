@@ -41,6 +41,11 @@ foreach ($abi in $abiList) {
         $targets += "p5rimport"
         $extraLibs += @("$build\libp5rimport.so", $harness)
     }
+    if ($abi -eq "arm64-v8a") {
+        foreach ($h in @("libhook_impl.so", "libmain_hook.so", "libfile_redirect_hook.so", "libgsl_alloc_hook.so")) {
+            $extraLibs += "$build\adrenotools\src\hook\$h"
+        }
+    }
     cmake --build $build --target @targets
     if ($LASTEXITCODE) { throw "native build failed ($abi)" }
 }

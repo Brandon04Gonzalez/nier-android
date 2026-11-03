@@ -54,5 +54,10 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">
             <meta-data android:name="android.app.lib_name" android:value="nier" />
         </activity>
+            <provider
+            android:name=".LogProvider"
+            android:authorities="io.github.nierrecomp.logprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

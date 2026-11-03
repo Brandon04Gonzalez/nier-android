@@ -32,6 +32,8 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -98,7 +100,8 @@ public class Launcher extends Activity {
     final Map<String, String> config = new LinkedHashMap<>();
     TextView status;
     Button play;
-    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_ICON = 3, PICK_MOD = 4;
+    TextView driverName;
+    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_ICON = 3, PICK_MOD = 4, PICK_DRIVER = 5;
 
     String t(String spanish, String english) { return Lang.t(spanish, english); }
 
@@ -376,6 +379,39 @@ public class Launcher extends Activity {
             }
         });
 
+        // GPU driver (libadrenotools / Turnip)
+        LinearLayout drvRow = new LinearLayout(this);
+        drvRow.setOrientation(LinearLayout.HORIZONTAL);
+        drvRow.setGravity(Gravity.CENTER_VERTICAL);
+        drvRow.setPadding(0, dp(4), 0, dp(4));
+        driverName = new TextView(this);
+        driverName.setTextColor(Color.WHITE);
+        drvRow.addView(driverName, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        Button drvImport = new Button(this);
+        drvImport.setAllCaps(false);
+        drvImport.setMinWidth(dp(88));
+        drvImport.setText(t("Importar", "Import"));
+        drvRow.addView(drvImport);
+        Button drvRemove = new Button(this);
+        drvRemove.setAllCaps(false);
+        drvRemove.setMinWidth(dp(88));
+        drvRemove.setText(t("Quitar", "Remove"));
+        drvRow.addView(drvRemove);
+        drvImport.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pick(PICK_DRIVER, "*/*", false);
+            }
+        });
+        drvRemove.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                removeDriver();
+            }
+        });
+        root.addView(drvRow);
+        showDriver();
+
         // Logs: logcat (the runtime's tag is the game id) and nx.log, into one text file in Download to send.
         addRow(root, t("Registros de depuración", "Debug logs"), t("Exportar registros", "Export logs"),
                 new View.OnClickListener() {
@@ -436,6 +472,7 @@ public class Launcher extends Activity {
                 if (o.values[k].equals(v)) o.pick = k;
         }
         updateButtons(getWindow().getDecorView());
+        showDriver();
         List<String> missing = hasAccess() ? missingData() : new ArrayList<String>();
         if (!hasAccess()) {
             status.setText(t("Hace falta el permiso de acceso a todos los archivos para leer los datos del juego.",
@@ -649,6 +686,101 @@ public class Launcher extends Activity {
     // Download/nier-log.txt: the device, the runtime's logcat lines (its tag is the game id, "nier"), crash dumps
     // (DEBUG), the Vulkan driver's lines and the end of nx.log (written next to the data by non-release builds); then
     // the share sheet with the same text (its end, when long).
+    File driverDir() {
+        File dir = new File(getFilesDir(), "gpu_driver");
+        dir.mkdirs();
+        return dir;
+    }
+
+    String activeDriver() {
+        File active = new File(driverDir(), "active.txt");
+        if (!active.exists()) return "";
+        try (BufferedReader r = new BufferedReader(new FileReader(active))) {
+            String l = r.readLine();
+            return l == null ? "" : l.trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    void showDriver() {
+        if (driverName == null) return;
+        String a = activeDriver();
+        driverName.setText(a.isEmpty() ? t("Driver de GPU: del sistema", "GPU driver: system")
+                : String.format(Locale.ROOT, t("Driver de GPU: %s", "GPU driver: %s"), a));
+    }
+
+    void removeDriver() {
+        File[] files = driverDir().listFiles();
+        if (files != null) for (File f : files) f.delete();
+        showDriver();
+        Toast.makeText(this, t("Driver del sistema activado", "System driver restored"), Toast.LENGTH_LONG).show();
+    }
+
+    static void copyDriverStream(InputStream in, File dest) throws java.io.IOException {
+        try (OutputStream out = new FileOutputStream(dest)) {
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+    }
+
+    void importDriver(Uri uri) {
+        try {
+            String picked = displayName(uri);
+            File dir = driverDir();
+            File[] old = dir.listFiles();
+            if (old != null) for (File f : old) f.delete();
+            String libName = null;
+            if (picked.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+                String soEntry = null, wanted = null;
+                try (java.util.zip.ZipInputStream zin = new java.util.zip.ZipInputStream(getContentResolver().openInputStream(uri))) {
+                    java.util.zip.ZipEntry e;
+                    while ((e = zin.getNextEntry()) != null) {
+                        String base = new File(e.getName()).getName();
+                        if (e.isDirectory()) continue;
+                        if (base.equals("meta.json")) {
+                            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                            byte[] buf = new byte[8192];
+                            int n;
+                            while ((n = zin.read(buf)) > 0) bo.write(buf, 0, n);
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"libraryName\"\\s*:\\s*\"([^\"]+)\"")
+                                    .matcher(bo.toString("UTF-8"));
+                            if (m.find()) wanted = m.group(1);
+                        } else if (base.endsWith(".so")) {
+                            copyDriverStream(zin, new File(dir, base));
+                            if (soEntry == null) soEntry = base;
+                        }
+                    }
+                }
+                libName = wanted != null && new File(dir, wanted).exists() ? wanted : soEntry;
+            } else {
+                libName = picked.endsWith(".so") ? picked : picked + ".so";
+                try (InputStream in = getContentResolver().openInputStream(uri)) {
+                    if (in == null) throw new java.io.IOException("Cannot open selected file");
+                    copyDriverStream(in, new File(dir, libName));
+                }
+            }
+            if (libName == null) throw new java.io.IOException(t("No hay ningun .so dentro", "No .so file inside"));
+            try (FileWriter w = new FileWriter(new File(dir, "active.txt"))) {
+                w.write(libName + "\n");
+            }
+            showDriver();
+            new AlertDialog.Builder(this)
+                    .setTitle(t("Driver importado", "Driver imported"))
+                    .setMessage(String.format(Locale.ROOT, t("%s\n\nCierra el juego por completo y abrelo otra vez. Para volver al driver del sistema pulsa Quitar.",
+                            "%s\n\nClose the game completely and start it again. To go back to the system driver press Remove."), libName))
+                    .setPositiveButton("OK", null)
+                    .show();
+        } catch (Exception e) {
+            new AlertDialog.Builder(this)
+                    .setTitle(t("No se pudo importar el driver", "Driver import failed"))
+                    .setMessage(String.valueOf(e.getMessage()))
+                    .setPositiveButton("OK", null)
+                    .show();
+        }
+    }
+
     void exportLogs() {
         try {
             File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
@@ -664,7 +796,7 @@ public class Launcher extends Activity {
             sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
             sb.append("Date: ").append(new java.util.Date()).append("\n\n=== logcat ===\n");
             try {
-                Process p = Runtime.getRuntime().exec(new String[] {"logcat", "-d", "-s", "nier:V", "DEBUG:V", "vulkan:V"});
+                Process p = Runtime.getRuntime().exec(new String[] {"logcat", "-d", "-t", "500"});
                 try (BufferedReader br = new BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
                     for (String line; (line = br.readLine()) != null; ) sb.append(line).append('\n');
                 }
@@ -676,6 +808,11 @@ public class Launcher extends Activity {
                 sb.append("\n=== nx.log").append(nxLog.length() > LOG_TAIL ? " (its last MB)" : "").append(" ===\n");
                 sb.append(tail(nxLog, LOG_TAIL));
             }
+            File nxLogPrev = new File(dataDir(), "nx.log.prev");
+            if (nxLogPrev.canRead()) {
+                sb.append("\n=== nx.log.prev").append(nxLogPrev.length() > LOG_TAIL ? " (its last MB)" : "").append(" ===\n");
+                sb.append(tail(nxLogPrev, LOG_TAIL));
+            }
             try (FileWriter w = new FileWriter(out)) {
                 w.write(sb.toString());
             }
@@ -683,12 +820,14 @@ public class Launcher extends Activity {
             android.media.MediaScannerConnection.scanFile(this, new String[] {out.getPath()}, null, null);
             Toast.makeText(this, Lang.f("Registros exportados a Descargas/%s", "Logs exported to Download/%s",
                     out.getName()), Toast.LENGTH_SHORT).show();
-            String text = sb.length() > SHARE_TEXT ? sb.substring(sb.length() - SHARE_TEXT) : sb.toString();
+            Uri logUri = Uri.parse("content://" + getPackageName() + ".logprovider" + out.getAbsolutePath());
             Intent share = new Intent(Intent.ACTION_SEND);
             share.setType("text/plain");
+            share.putExtra(Intent.EXTRA_STREAM, logUri);
             share.putExtra(Intent.EXTRA_SUBJECT, "NieR Automata debug log");
-            share.putExtra(Intent.EXTRA_TEXT, text);
-            startActivity(Intent.createChooser(share, t("Compartir registros", "Share logs")));
+            share.setClipData(android.content.ClipData.newRawUri("Log", logUri));
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, t("Compartir archivo de registros", "Share log file")));
         } catch (Exception e) {
             tell(t("Registros de depuración", "Debug logs"), Lang.f("No se pudieron exportar los registros: %s",
                     "Could not export the logs: %s", String.valueOf(e.getMessage())));
@@ -699,7 +838,8 @@ public class Launcher extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) return;
-        if (request == PICK_ICON) onIconPicked(data.getData());
+        if (request == PICK_DRIVER && data.getData() != null) importDriver(data.getData());
+        else if (request == PICK_ICON) onIconPicked(data.getData());
         else if (request == PICK_MOD) installMod(data.getData());
         else if (request == PICK_ZIP || request == PICK_FOLDER) importSaves(request, data.getData());
     }
@@ -752,23 +892,23 @@ public class Launcher extends Activity {
         final String res = config.get("RESOLUTION");
         if ("360p".equals(res)) {
             config.put("NX_HANDHELD", "1");
-            config.put("resolution", "640x360");
-            config.put("NX_RENDER_RES", "640x360");
+            config.put("resolution", "360p");
+            config.put("NX_RENDER_RES", "360p");
             config.put("NX_RES", "360p");
         } else if ("480p".equals(res)) {
             config.put("NX_HANDHELD", "1");
-            config.put("resolution", "854x480");
-            config.put("NX_RENDER_RES", "854x480");
+            config.put("resolution", "480p");
+            config.put("NX_RENDER_RES", "480p");
             config.put("NX_RES", "480p");
         } else if ("1080p".equals(res)) {
             config.put("NX_HANDHELD", "0");
-            config.put("resolution", "1920x1080");
-            config.put("NX_RENDER_RES", "1920x1080");
+            config.put("resolution", "1080p");
+            config.put("NX_RENDER_RES", "1080p");
             config.put("NX_RES", "1080p");
         } else {
             config.put("NX_HANDHELD", "1");
-            config.put("resolution", "1280x720");
-            config.put("NX_RENDER_RES", "1280x720");
+            config.put("resolution", "720p");
+            config.put("NX_RENDER_RES", "720p");
             config.put("NX_RES", "720p");
         }
         for (String k : new String[] {"RENDER_SCALE", "NX_ANISO_MAX", "NX_LOD_BIAS"}) config.remove(k);
