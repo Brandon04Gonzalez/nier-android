@@ -179,8 +179,8 @@ public class Launcher extends Activity {
         File d = dataDir();
         if (!new File(d, "extract/romfs/data000.cpk").canRead()) missing.add("extract/romfs/data000.cpk");
         if (!new File(d, "spirv/results.tsv").canRead()) missing.add("spirv/results.tsv");
-        if (!new File(d, "analysis/main.bin").canRead() && !new File(d, "exefs/main").canRead())
-            missing.add("analysis/main.bin (exefs/main)");
+        if (!new File(d, "exefs/main").canRead()) missing.add("exefs/main");
+        if (!new File(d, "exefs/sdk").canRead()) missing.add("exefs/sdk");
         return missing;
     }
 
