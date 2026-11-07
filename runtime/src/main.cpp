@@ -193,6 +193,10 @@ void boot() {
             auto m = nce::load_nso(mod_file, name, base, error);
             if (m) nso.push_back(std::move(m));
             else log("nce: error loading mod %s: %s", mod_file.c_str(), error.c_str());
+        } else if (name != "main" && name != "sdk") {
+            // Only main and sdk come from the game itself (what the recompiled build runs too): its subsdk0 is the
+            // Switch's NVN driver, and a third module does not fit the 512 MiB reserved for them (memory.cpp).
+            continue;
         } else if (image) {
             auto it = image->exefs().find(name);
             if (it != image->exefs().end()) {
@@ -220,21 +224,16 @@ void boot() {
             std::snprintf(hex, sizeof hex, "%02X", b);
             have += hex;
         }
-        const char* known_builds[] = {
-            "708BCACA873EA32B", "B78A03E489E5BD92", "6E1F4CAE92A28C91", "2F2253ACD6BE5D87"
-        };
-        bool known = false;
-        for (const char* k : known_builds) {
-            if (have.compare(0, std::strlen(k), k) == 0) { known = true; break; }
-        }
+        // The game's own build (game::kInfo.main_build_id; the P5R list this came with named P5R's builds only, so
+        // every NieR dump was refused).
         bool allow_any = std::getenv("NX_ALLOW_ANY_BUILD") || std::getenv("NX_IGNORE_VERSION");
-        if (known) {
-            log("p5r: main build %s recognized and supported", have.c_str());
+        if (have.compare(0, std::strlen(want), want) == 0) {
+            log("nier: main build %s recognized and supported", have.c_str());
         } else if (allow_any) {
-            log("p5r: main build %s allowed by NX_ALLOW_ANY_BUILD switch", have.c_str());
+            log("nier: main build %s allowed by NX_ALLOW_ANY_BUILD switch", have.c_str());
         } else {
-            fatal("exefs/main is build %s, not %s: this port is made for Persona 5 Royal 1.0.0 (US, EU, JP, or Asia). Set NX_ALLOW_ANY_BUILD=1 to override.",
-                  have.c_str(), want);
+            fatal("exefs/main is build %s, not %s: this port is made for NieR:Automata 1.0.3. Set NX_ALLOW_ANY_BUILD=1 to "
+                  "override.", have.c_str(), want);
         }
     }
 
