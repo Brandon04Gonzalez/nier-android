@@ -24,7 +24,12 @@ v0.1.0 (published as a pre-release) needs a PC: the game data (RomFS with update
   - Preparation took about 2.5 min: import of 11105 MB, build 3C10EC35C5EF4C36, 1219 shaders.
   - Play reaches the intro and 3D gameplay at 30 fps.
   - The importer's up-front free-space check (11.71 GB) does not count the existing files it would overwrite, so the old `extract/` (8.6 GB) was removed for the test; `user/` was kept.
-- [ ] N6 Docs (README without a PC), release v0.2.0 on nier-android, NieR Discord announcement (held until now)
+- [x] N6 Published:
+  - README v0.2.0 (2569182), pushed to nier-android main.
+  - Release v0.2.0 (latest) with nier.apk (3.78 MB); repo description updated.
+  - Profile README line updated.
+  - Bilingual Discord post in #announcements-anuncios.
+  - Left on the tablet for the user to decide: /sdcard/Download/nier_test (the XCI, update and keys pushed for the test).
 
 ## Checks
 - N1: manifest rows and file set identical to the Python output.
