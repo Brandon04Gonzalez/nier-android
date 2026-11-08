@@ -21,9 +21,9 @@ What you did, what you expected, and what happened instead. Where in the game (m
 
 **Log**
 Connect the phone with USB debugging on, run this before starting the game, reproduce the problem, then stop it
-with Ctrl+C and attach `p5r-log.txt`:
+with Ctrl+C and attach `nier-log.txt`:
 ```
-adb logcat -s p5r:V > p5r-log.txt
+adb logcat -s nier:V > nier-log.txt
 ```
 
 Please do not attach game files, keys or saves of other people. No game files or keys are provided here.
