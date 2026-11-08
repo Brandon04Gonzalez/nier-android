@@ -16,9 +16,9 @@ v0.1.0 (published as a pre-release) needs a PC: the game data (RomFS with update
 
 ## Tasks
 - [x] N1 nier_shaders.cpp + PC CLI: parity with the Python output, identical manifest (1371 rows), 2445 files with identical contents, 1219 distinct code blocks, 1.3 s (zig c++ build of shaders_cli.cpp) — route: inline
-- [ ] N2 nier_import_jni.cpp + CMake target nierimport + build_apk.ps1 block — route: inline
-- [ ] N3 Android translator (Docker, NieR variant)
-- [ ] N4 Java: Importer, ImportActivity, Launcher pickers and Prepare flow, manifest
+- [x] N2 nier_import_jni.cpp (run_import with keep_exefs, the build ID check 3C10EC35C5EF4C36, shaders, harness) + CMake target nierimport + build_apk.ps1 block — route: inline
+- [x] N3 Android translator: games/nier/tools/build_harness_android.sh, Docker with p5r-port's third_party mounted at /src/private/third_party (a junction does not resolve in the container) → private/build/spirv_harness_android_nier/libspirvharness.so, 4.58 MB; P5R's copy untouched
+- [x] N4 Java: Importer, ImportActivity (:import), Launcher (base/update/keys pickers, play button walks pick→prepare, status texts), manifest, v0.2.0 (versionCode 2). nier.apk builds: 3.6 MB with libnierimport.so and libspirvharness.so
 - [ ] N5 Tablet test (HA269JK2): copy the XCI + update + keys, import, translate, play (the existing 11 GB data folder gets overwritten in place; `user/` saves are kept)
 - [ ] N6 Docs (README without a PC), release v0.2.0 on nier-android, NieR Discord announcement (held until now)
 

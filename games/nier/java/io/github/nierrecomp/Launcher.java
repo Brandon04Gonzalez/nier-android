@@ -2,8 +2,11 @@ package io.github.nierrecomp;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.database.Cursor;
@@ -16,6 +19,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.view.Gravity;
@@ -65,9 +69,9 @@ import java.util.Map;
  * It imports or exports the saves (user/save, SaveFiles.java: a ZIP or a folder in, a ZIP in Download out), installs
  * or turns on and off the mods (mods/<Name>/romfs, Mods.java) and exports the logs (logcat tag "nier" and nx.log) to
  * Download/nier-log.txt.
- * The game data is prepared on the PC from the player's own copy of the game (the same layout as private/nier:
- * analysis/ or exefs/, extract/romfs/, spirv/) and copied to Internal storage/NieR Automata: there is no on-phone
- * import.
+ * The game data: the player picks their base game (.xci / .nsp), update 1.0.3 (.nsp) and keys here, and
+ * ImportActivity writes the game with its update to Internal storage/NieR Automata (exefs/, extract/romfs/) and
+ * translates its shaders (spirv/), once. A data folder prepared on the PC (the same layout as private/nier) works too.
  * The icon: a home screen shortcut with a picture of the player's own (Android lets an app pin shortcuts, not change
  * its own icon).
  * Other lines of config.txt are kept as they were. The launcher itself speaks the device's language (Lang.java:
@@ -101,7 +105,8 @@ public class Launcher extends Activity {
     TextView status;
     Button play;
     TextView driverName;
-    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_ICON = 3, PICK_MOD = 4, PICK_DRIVER = 5;
+    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_ICON = 3, PICK_MOD = 4, PICK_DRIVER = 5, PICK_BASE = 6, PICK_UPDATE = 7,
+            PICK_KEYS = 8, PREPARE = 9;
 
     String t(String spanish, String english) { return Lang.t(spanish, english); }
 
@@ -127,6 +132,105 @@ public class Launcher extends Activity {
         }
         String last = uri.getLastPathSegment();
         return last == null ? "" : last.substring(last.lastIndexOf('/') + 1);
+    }
+
+    // ---- the game, prepared on the phone: the base game and update 1.0.3 the player picks, with their keys ----
+
+    SharedPreferences prefs() { return getSharedPreferences("game", MODE_PRIVATE); }
+
+    String gameUri(boolean update) { return prefs().getString(update ? "update_uri" : "base_uri", null); }
+
+    String gameName(boolean update) { return prefs().getString(update ? "update_name" : "base_name", ""); }
+
+    static File keysFile(Context c, String name) { return new File(new File(c.getFilesDir(), "keys"), name); }
+
+    boolean hasKeys() { return keysFile(this, "prod.keys").length() > 0; }
+
+    boolean readable(String uri) {
+        if (uri == null) return false;
+        try (ParcelFileDescriptor f = getContentResolver().openFileDescriptor(Uri.parse(uri), "r")) {
+            return f != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // The base game (.xci / .nsp) or the update (.nsp); the update is small (about 24 MB), the base game is not.
+    void onGamePicked(Uri uri, boolean update) {
+        String name = displayName(uri);
+        String lower = name.toLowerCase(Locale.ROOT);
+        long size = -1;
+        try (ParcelFileDescriptor f = getContentResolver().openFileDescriptor(uri, "r")) {
+            if (f != null) size = f.getStatSize();
+        } catch (Exception ignored) {
+        }
+        boolean game = lower.endsWith(".nsp") || lower.endsWith(".xci");
+        boolean looksUpdate = lower.endsWith(".nsp") && size >= 0 && size < (1L << 30);
+        if (!game || (update && !lower.endsWith(".nsp")) || (update != looksUpdate && size >= 0)) {
+            tell(t("Archivo no válido", "Not the right file"), update
+                    ? t("Elige el .nsp de la actualización 1.0.3 (v131072, unos 24 MB).",
+                            "Choose update 1.0.3's .nsp (v131072, about 24 MB).")
+                    : t("Elige el .xci o .nsp del juego base (el grande, no la actualización).",
+                            "Choose the base game's .xci or .nsp (the big one, not the update)."));
+            return;
+        }
+        try {
+            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) {  // a provider without persistable grants: works while the app runs
+        }
+        prefs().edit().putString(update ? "update_uri" : "base_uri", uri.toString())
+                .putString(update ? "update_name" : "base_name", name).apply();
+    }
+
+    // prod.keys (and title.keys, when the dump needs it): copied into the app's own storage, never shared or logged.
+    void onKeysPicked(Intent data) {
+        List<Uri> uris = new ArrayList<>();
+        ClipData clip = data.getClipData();
+        if (clip != null)
+            for (int k = 0; k < clip.getItemCount(); k++) uris.add(clip.getItemAt(k).getUri());
+        else if (data.getData() != null) uris.add(data.getData());
+        boolean prod = false;
+        for (Uri uri : uris) {
+            String name = displayName(uri).toLowerCase(Locale.ROOT);
+            String target = name.contains("title") ? "title.keys" : "prod.keys";
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                byte[] buf = new byte[1 << 20];
+                int n = 0, r;
+                while (in != null && n < buf.length && (r = in.read(buf, n, buf.length - n)) > 0) n += r;
+                String text = new String(buf, 0, n, "UTF-8");
+                if (target.equals("prod.keys") && !text.contains("header_key") && !text.contains("master_key_00")) continue;
+                File f = keysFile(this, target);
+                f.getParentFile().mkdirs();
+                try (OutputStream out = new FileOutputStream(f)) {
+                    out.write(buf, 0, n);
+                }
+                prod |= target.equals("prod.keys");
+            } catch (Exception ignored) {
+            }
+        }
+        if (!prod && !hasKeys())
+            tell(t("Claves no válidas", "Not a keys file"),
+                    t("Ese archivo no tiene las claves (header_key). Elige el prod.keys de tu consola.",
+                            "That file has no keys (header_key). Choose your console's prod.keys."));
+    }
+
+    void prepare() {
+        Intent i = new Intent(this, ImportActivity.class);
+        i.putExtra(ImportActivity.EXTRA_BASE, gameUri(false));
+        i.putExtra(ImportActivity.EXTRA_BASE_NAME, gameName(false));
+        i.putExtra(ImportActivity.EXTRA_UPDATE, gameUri(true));
+        i.putExtra(ImportActivity.EXTRA_UPDATE_NAME, gameName(true));
+        startActivityForResult(i, PREPARE);
+    }
+
+    boolean dataReady() { return missingData().isEmpty() && wrongBuild() == null; }
+
+    // What the play button does first when the data is not ready: pick what is missing, then prepare.
+    void nextStep() {
+        if (!readable(gameUri(false))) pick(PICK_BASE, "*/*", false);
+        else if (!readable(gameUri(true))) pick(PICK_UPDATE, "*/*", false);
+        else if (!hasKeys()) pick(PICK_KEYS, "*/*", true);
+        else prepare();
     }
 
     void pick(int request, String type, boolean multiple) {
@@ -291,6 +395,25 @@ public class Launcher extends Activity {
         status.setPadding(0, dp(6), 0, dp(14));
         root.addView(status);
 
+        addRow(root, t("Juego base (.xci / .nsp)", "Base game (.xci / .nsp)"), t("Elegir", "Choose"), new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pick(PICK_BASE, "*/*", false);
+            }
+        });
+        addRow(root, t("Actualización 1.0.3 (.nsp)", "Update 1.0.3 (.nsp)"), t("Elegir", "Choose"), new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pick(PICK_UPDATE, "*/*", false);
+            }
+        });
+        addRow(root, t("Claves (prod.keys)", "Keys (prod.keys)"), t("Elegir", "Choose"), new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pick(PICK_KEYS, "*/*", true);
+            }
+        });
+
         addRow(root, t("Icono", "Icon"), t("Elegir imagen", "Choose a picture"), new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -440,8 +563,8 @@ public class Launcher extends Activity {
                     askAccess();
                     return;
                 }
-                if (!missingData().isEmpty() || wrongBuild() != null) {
-                    refresh();
+                if (!dataReady()) {
+                    nextStep();
                     return;
                 }
                 save();
@@ -478,18 +601,27 @@ public class Launcher extends Activity {
             status.setText(t("Hace falta el permiso de acceso a todos los archivos para leer los datos del juego.",
                     "All-files access is needed to read the game data."));
             play.setText(t("Dar permiso", "Grant access"));
-        } else if (!missing.isEmpty()) {
-            status.setText(Lang.f("Faltan datos del juego en Almacenamiento interno/%s: %s. Prepáralos en el PC a partir "
-                            + "de tu propia copia del juego y cópialos ahí.",
-                    "Game data missing in Internal storage/%s: %s. Prepare it on the PC from your own copy of the game "
-                            + "and copy it there.", DATA, android.text.TextUtils.join(", ", missing)));
-            play.setText(t("Volver a buscar", "Look again"));
-        } else if (wrongBuild() != null) {
-            status.setText(Lang.f("Almacenamiento interno/%s/exefs/main no es NieR Automata 1.0.3 (build %s). Copia el "
-                            + "exefs de la versión 1.0.3 del juego.",
-                    "Internal storage/%s/exefs/main is not NieR Automata 1.0.3 (build %s). Copy the exefs of the "
-                            + "game's version 1.0.3.", DATA, wrongBuild()));
-            play.setText(t("Volver a buscar", "Look again"));
+        } else if (!dataReady() && !readable(gameUri(false))) {
+            status.setText(t("Elige tu juego base de NieR:Automata The End of YoRHa Edition (.xci o .nsp, juego base de "
+                            + "EE. UU.), luego la actualización 1.0.3 y tus claves. La app prepara el juego una sola vez "
+                            + "(unos 12 GB en el almacenamiento).",
+                    "Choose your NieR:Automata The End of YoRHa Edition base game (.xci or .nsp, the US base game), then "
+                            + "update 1.0.3 and your keys. The app prepares the game once (about 12 GB of storage)."));
+            play.setText(t("Elegir el juego base", "Choose the base game"));
+        } else if (!dataReady() && !readable(gameUri(true))) {
+            status.setText(Lang.f("Juego base: %s. Falta la actualización 1.0.3 (.nsp, v131072).",
+                    "Base game: %s. Update 1.0.3 (.nsp, v131072) is missing.", gameName(false)));
+            play.setText(t("Elegir la actualización 1.0.3", "Choose update 1.0.3"));
+        } else if (!dataReady() && !hasKeys()) {
+            status.setText(t("Falta tu prod.keys (y title.keys si tu volcado lo necesita).",
+                    "Your prod.keys (and title.keys, if your dump needs it) is missing."));
+            play.setText(t("Elegir prod.keys", "Choose prod.keys"));
+        } else if (!dataReady()) {
+            status.setText(Lang.f("Listo para preparar: %s + %s. Copia el juego con su actualización a Almacenamiento "
+                            + "interno/%s y traduce sus shaders, una sola vez.",
+                    "Ready to prepare: %s + %s. It writes the game with its update to Internal storage/%s and translates "
+                            + "its shaders, once.", gameName(false), gameName(true), DATA));
+            play.setText(t("Preparar el juego", "Prepare the game"));
         } else {
             status.setText(Lang.f("Datos listos: %s", "Data ready: %s", dataDir().getPath()));
             play.setText(t("Jugar", "Play"));
@@ -837,8 +969,20 @@ public class Launcher extends Activity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == PREPARE) {
+            refresh();
+            return;
+        }
+        if (result == RESULT_OK && data != null && request == PICK_KEYS) {
+            onKeysPicked(data);
+            refresh();
+            return;
+        }
         if (result != RESULT_OK || data == null || data.getData() == null) return;
-        if (request == PICK_DRIVER && data.getData() != null) importDriver(data.getData());
+        if (request == PICK_BASE || request == PICK_UPDATE) {
+            onGamePicked(data.getData(), request == PICK_UPDATE);
+            refresh();
+        } else if (request == PICK_DRIVER && data.getData() != null) importDriver(data.getData());
         else if (request == PICK_ICON) onIconPicked(data.getData());
         else if (request == PICK_MOD) installMod(data.getData());
         else if (request == PICK_ZIP || request == PICK_FOLDER) importSaves(request, data.getData());

@@ -43,6 +43,14 @@ foreach ($abi in $abiList) {
         $targets += "p5rimport"
         $extraLibs += @("$build\libp5rimport.so", $harness)
     }
+    if ($Nce -and $Game -eq "nier" -and $abi -eq "arm64-v8a") {
+        $harness = "$root\private\build\spirv_harness_android_nier\libspirvharness.so"
+        if (-not (Test-Path $harness)) {
+            throw "missing $harness. Build it once, with Docker Desktop running, from the repository root: docker run --rm -v ""${root}:/src"" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/nier/tools/build_harness_android.sh"
+        }
+        $targets += "nierimport"
+        $extraLibs += @("$build\libnierimport.so", $harness)
+    }
     if ($abi -eq "arm64-v8a") {
         foreach ($h in @("libhook_impl.so", "libmain_hook.so", "libfile_redirect_hook.so", "libgsl_alloc_hook.so")) {
             $extraLibs += "$build\adrenotools\src\hook\$h"

@@ -292,6 +292,18 @@ if(ANDROID AND NX_GAME STREQUAL "p5r")
     target_link_options(p5rimport PRIVATE -Wl,-z,max-page-size=16384)
 endif()
 
+# NieR's import on the phone (games/nier/import, ImportActivity): the base game and update 1.0.3 written to the data
+# folder by the importer and the shaders extracted; the translation is libspirvharness.so built from this branch
+# (games/nier/tools/build_harness_android.sh: NieR's translator, host subgroups of 128).
+if(ANDROID AND NX_GAME STREQUAL "nier")
+    add_library(nierimport SHARED games/nier/import/nier_import_jni.cpp games/nier/import/nier_shaders.cpp
+        "${NX_IMPORTER_DIR}/nximport.cpp" "${NX_IMPORTER_DIR}/nxcrypto.cpp")
+    target_include_directories(nierimport PRIVATE "${NX_IMPORTER_DIR}" games/nier/import)
+    target_compile_options(nierimport PRIVATE -O2 -fvisibility=hidden -march=armv8-a+crypto)
+    target_link_libraries(nierimport PRIVATE log dl)
+    target_link_options(nierimport PRIVATE -Wl,-z,max-page-size=16384)
+endif()
+
 # NX_RELEASE: the runtime and the game's glue only (the recompiled game code does not change with it).
 if(NX_RELEASE)
     target_compile_definitions(${NX_GAME} PRIVATE NX_RELEASE)
