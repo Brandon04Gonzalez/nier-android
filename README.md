@@ -1,19 +1,17 @@
-# NieR:Automata for Android (native port, preview)
+# NieR:Automata for Android (native port)
 
 An Android app that runs **your own copy** of NieR:Automata The End of YoRHa Edition (Nintendo Switch, update 1.0.3)
 natively on an arm64 phone or tablet. The Switch's operating system services, its audio, video and input, and NVN
 (the Switch's graphics API) are reimplemented on Android, with Vulkan for the graphics. The game's own code runs
 directly on the phone's CPU: the Switch and Android phones share the same CPU architecture (AArch64).
 
-> [!WARNING]
-> **Preview: this one needs a PC once.** Unlike the Persona ports, NieR has no on-phone import yet: the game's files
-> and its translated shaders are prepared on a Windows PC from your own dump and then copied to the phone (see
-> [Preparing the data](#preparing-the-data-on-a-pc)). It is meant for people comfortable with command-line tools.
+**No PC needed:** install the APK, pick your base game (`.xci` or `.nsp`), update 1.0.3 (`.nsp`) and your
+`prod.keys` on the phone, let it prepare the game once (it writes the game with its update, about 12 GB, and translates
+its shaders), and play.
 
 > [!IMPORTANT]
 > **No game files are included, here or in the APK.** This repository and its releases hold no game code, assets,
-> shaders, keys or firmware. The APK is only the engine: it reads the game from the data you prepare from your own
-> dump. You need your own legally dumped copy of the game (the base game and update 1.0.3) and your own keys. How to
+> shaders, keys or firmware. The APK is only the engine: it prepares and reads the game from your own dump. You need your own legally dumped copy of the game (the base game and update 1.0.3) and your own keys. How to
 > dump them from your console is **not** covered here. Please do not ask for game files or keys.
 
 NieR:Automata is © SQUARE ENIX. This is an unofficial fan project, not affiliated with or endorsed by SQUARE ENIX,
@@ -26,9 +24,22 @@ PlatinumGames, Virtuos or Nintendo.
   are free and made for preservation. Donating is entirely voluntary and helps with the costs of making them (test
   devices, hardware, servers). Nothing is locked behind a donation.
 
-## Preparing the data on a PC
+## Install
 
-You need Windows, [Python 3](https://www.python.org/), the [.NET 10 SDK](https://dotnet.microsoft.com/), CMake and
+1. Copy to the phone (the Download folder is fine): your **base game** (`.xci` or `.nsp`, US `010056B015FE8000`),
+   **update 1.0.3** (`.nsp`, `010056B015FE8800`, v131072, about 24 MB) and your `prod.keys` (and `title.keys` if your
+   dump needs it).
+2. Install **NieR** from the [Releases](../../releases) page and open it; allow "All files access".
+3. **Base game → Choose**, **Update 1.0.3 → Choose**, **Keys → Choose** (or just press the big button: it asks for what
+   is missing, in that order).
+4. Press **Prepare the game** and keep the app open: it writes the game with its update to
+   `Internal storage/NieR Automata` (about 12 GB; you need that much free space, plus the size of the largest game
+   file, about 2.4 GB, while it writes) and translates its shaders for your GPU. Once.
+5. Press **Play**. After that, the base game and update files can be deleted from the phone if you need the space.
+
+## Preparing the data on a PC (optional)
+
+The phone does all of this by itself now. If you prefer to prepare the data folder on a PC, you need Windows, [Python 3](https://www.python.org/), the [.NET 10 SDK](https://dotnet.microsoft.com/), CMake and
 Ninja (`pip install cmake ninja`), a C++ compiler (Visual Studio Build Tools, run the commands from a *Developer
 PowerShell*), your dumps of the **base game** (`.xci` or `.nsp`, `010056B015FE8000`) and **update 1.0.3**
 (`010056B015FE8800`, v131072), and your `prod.keys` and `title.keys`. From a clone of this repository:
@@ -52,12 +63,6 @@ Then copy `private\nier\exefs`, `private\nier\extract\romfs` and `private\nier\s
 `Internal storage/NieR Automata/` (so that `NieR Automata/exefs/main`, `NieR Automata/extract/romfs/data000.cpk` and
 `NieR Automata/spirv/results.tsv` exist). Keep that data to yourself: it is made from your copy of the game.
 
-## Install
-
-1. Prepare and copy the data as above.
-2. Install **NieR** from the [Releases](../../releases) page and open it; allow "All files access".
-3. The home screen checks the data folder (and that `exefs/main` is update 1.0.3) and tells you what is missing.
-   Press **Play**.
 
 ### Options
 
@@ -70,11 +75,11 @@ a home screen shortcut with a picture of your own.
 ## Requirements
 
 - An arm64 Android phone or tablet with **Android 10 or newer** and **Vulkan 1.1**, 8 GB of RAM recommended.
-- About 13 GB of storage for the prepared data.
+- About 13 GB of storage for the prepared game, plus room for your base game file while it is prepared.
 
 ## Status
 
-A preview: it reaches the prologue and plays, and it has been tested on few devices so far. Expect rough edges
+Early release: it reaches the prologue and plays, and it has been tested on few devices so far. Expect rough edges
 on weaker GPUs. Reports are very welcome, on Discord or in [Issues](../../issues): your phone model, Android version,
 what happened and the log (**Export logs** on the home screen).
 
@@ -88,12 +93,18 @@ what happened and the log (**Export logs** on the home screen).
   by BelmanteGu / Projeto Belmante), shared with the [Persona 5 Royal port](https://github.com/Brandon04Gonzalez/p5r-android).
   This port adds NieR's needs (`games/nier/`): separate textures and samplers in NVN, several mixed audio outputs
   (Wwise and films), Opus, the system keyboard, and more.
-- **Shaders** come from Ryujinx's shader translator (Ryubing, MIT), run on the PC for this preview.
+- **The import on the phone** (`games/nier/import/`): the importer writes the base game with update 1.0.3 applied
+  (`extract/romfs`, `exefs`) and checks `main`'s build ID; the shaders are taken out of `data000.cpk`'s DAT archives
+  and translated once to SPIR-V with [Ryujinx](https://github.com/Ryubing/Ryujinx)'s shader translator (MIT), built
+  for Android with .NET NativeAOT (`libspirvharness.so`, `games/nier/tools/build_harness_android.sh`).
 
 ## Building the APK
 
-The same toolchain as the [P5R port](https://github.com/Brandon04Gonzalez/p5r-android#building-the-apk), then:
+The same toolchain as the [P5R port](https://github.com/Brandon04Gonzalez/p5r-android#building-the-apk) (with the
+Ryubing source in `private\third_party\ryubing`), then NieR's own shader translator for Android, once (Docker
+Desktop running), and the APK:
 ```powershell
+docker run --rm -v "${PWD}:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/nier/tools/build_harness_android.sh
 games\nier\tools\build_android.cmd -Nce           # -> private\nier\apk_nce\nier.apk; -Install installs it with adb
 ```
 
@@ -107,13 +118,20 @@ Una app de Android que ejecuta **tu propia copia** de NieR:Automata The End of Y
   son gratis y se hacen para preservación. Donar es totalmente voluntario y ayuda con los gastos que conlleva hacerlos
   (dispositivos de prueba, equipo, servidores). No hay nada de pago.
 
-**Es una versión preview y necesita un PC una vez.** A diferencia de los Persona, todavía no importa el juego en el
-móvil: los archivos del juego y sus shaders traducidos se preparan en un PC con Windows a partir de tu dump (juego base
-+ actualización 1.0.3, con tus `prod.keys` y `title.keys`) siguiendo los comandos de
-[Preparing the data](#preparing-the-data-on-a-pc). Después copia `exefs`, `extract/romfs` y `spirv` a
-`Almacenamiento interno/NieR Automata/`, instala **NieR** desde [Releases](../../releases), permite el acceso a todos los
-archivos y pulsa **Jugar**: la pantalla de inicio te dice si falta algo. Pensado para quien se maneja con la línea de
-comandos; si te atascas, pregunta en Discord. No se proporcionan juegos ni claves.
+**No hace falta PC.**
+
+1. Copia al móvil (por ejemplo a Descargas) tu **juego base** (`.xci` o `.nsp`, EE. UU. `010056B015FE8000`), la
+   **actualización 1.0.3** (`.nsp`, v131072, unos 24 MB) y tu `prod.keys` (y `title.keys` si tu volcado lo necesita).
+2. Instala **NieR** desde [Releases](../../releases), ábrelo y permite el acceso a todos los archivos.
+3. **Juego base → Elegir**, **Actualización 1.0.3 → Elegir**, **Claves → Elegir** (o pulsa el botón grande: te pide lo
+   que falta, en ese orden).
+4. Pulsa **Preparar el juego** y deja la app abierta: copia el juego con su actualización a
+   `Almacenamiento interno/NieR Automata` (unos 12 GB; necesitas ese espacio libre más unos 2,4 GB mientras escribe) y
+   traduce sus shaders para tu GPU. Una sola vez.
+5. Pulsa **Jugar**. Después puedes borrar del móvil los archivos del juego base y la actualización si te falta espacio.
+
+Si algo falla, cuéntalo en Discord o en [Issues](../../issues) con tu modelo de móvil y el registro (**Exportar
+registros**). No se proporcionan juegos ni claves.
 
 ## Credits and license
 

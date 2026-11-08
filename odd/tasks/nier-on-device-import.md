@@ -19,7 +19,11 @@ v0.1.0 (published as a pre-release) needs a PC: the game data (RomFS with update
 - [x] N2 nier_import_jni.cpp (run_import with keep_exefs, the build ID check 3C10EC35C5EF4C36, shaders, harness) + CMake target nierimport + build_apk.ps1 block — route: inline
 - [x] N3 Android translator: games/nier/tools/build_harness_android.sh, Docker with p5r-port's third_party mounted at /src/private/third_party (a junction does not resolve in the container) → private/build/spirv_harness_android_nier/libspirvharness.so, 4.58 MB; P5R's copy untouched
 - [x] N4 Java: Importer, ImportActivity (:import), Launcher (base/update/keys pickers, play button walks pick→prepare, status texts), manifest, v0.2.0 (versionCode 2). nier.apk builds: 3.6 MB with libnierimport.so and libspirvharness.so
-- [ ] N5 Tablet test (HA269JK2): copy the XCI + update + keys, import, translate, play (the existing 11 GB data folder gets overwritten in place; `user/` saves are kept)
+- [x] N5 Tablet test passed (HA269JK2, Lenovo Tab M11):
+  - Files picked through DocumentsUI. The adb-pushed files needed a media scan to show up in Downloads.
+  - Preparation took about 2.5 min: import of 11105 MB, build 3C10EC35C5EF4C36, 1219 shaders.
+  - Play reaches the intro and 3D gameplay at 30 fps.
+  - The importer's up-front free-space check (11.71 GB) does not count the existing files it would overwrite, so the old `extract/` (8.6 GB) was removed for the test; `user/` was kept.
 - [ ] N6 Docs (README without a PC), release v0.2.0 on nier-android, NieR Discord announcement (held until now)
 
 ## Checks
@@ -31,4 +35,9 @@ v0.1.0 (published as a pre-release) needs a PC: the game data (RomFS with update
 ask-on-risk; forecast about 900 authored lines (C++ about 400, Java about 350, build about 50, docs about 100).
 
 ## Progress
+- Commits: e1a23d7 (N1 shaders), ae279fb (N2–N4 import, translator, Java, v0.2.0). README for v0.2.0 edited, not committed yet (after the device test).
+- N5 setup on the tablet:
+  - Deleted only `NieR Automata/extract/romfs/data014.cpk` (2.4 GB; the importer writes `<file>.part` and then renames, so it needs room for the largest file).
+  - Renamed `spirv/results.tsv` to `results.tsv.bak` so the launcher asks to prepare.
+  - Pushed the XCI, the update and the keys to /sdcard/Download/nier_test; installed nier.apk 0.2.0.
 - Created 2026-11-07. The user approved: NieR first, then the Persona Q repo; test on the tablet.
