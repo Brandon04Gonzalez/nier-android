@@ -418,6 +418,17 @@ bool pc_relative(uint32_t w) {
            || (w & 0x3B000000u) == 0x18000000u; // ldr (literal), prfm (literal)
 }
 
+bool is_adrp(uint32_t w) { return (w & 0x9F000000u) == 0x90000000u; }
+
+uint32_t relocate_adrp(uint32_t w, uint64_t from, uint64_t to) {
+    uint32_t immlo = (w >> 29) & 3u, immhi = (w >> 5) & 0x7FFFFu;
+    int64_t imm = int64_t(int32_t((immhi << 2 | immlo) << 11) >> 11);
+    uint64_t page = (from & ~0xFFFull) + uint64_t(imm << 12);
+    int64_t d = int64_t(page - (to & ~0xFFFull)) >> 12;
+    if (d < -(int64_t(1) << 20) || d >= (int64_t(1) << 20)) fatal("nce: adrp out of range");
+    return 0x90000000u | (uint32_t(d & 3) << 29) | ((uint32_t(d >> 2) & 0x7FFFFu) << 5) | (w & 0x1Fu);
+}
+
 // ---- code regions ----
 
 struct Region {
@@ -718,7 +729,7 @@ uint64_t hook(uint64_t addr, HleFn fn) {
         return 0;
     }
     const uint32_t first = ld<uint32_t>(addr);
-    if (pc_relative(first)) {
+    if (pc_relative(first) && !is_adrp(first)) {
         log("nce: hook at %s: its first instruction %08x depends on its address", describe(addr).c_str(), first);
         return 0;
     }
@@ -736,7 +747,7 @@ uint64_t hook(uint64_t addr, HleFn fn) {
     const uint64_t from = r.cur;
     if (!protect(r.base, kRegionSize, PROT_READ | PROT_WRITE | PROT_EXEC))
         protect(r.base, kRegionSize, PROT_READ | PROT_WRITE);
-    const uint64_t original = r.emit(first);
+    const uint64_t original = r.emit(is_adrp(first) ? relocate_adrp(first, addr, r.cur) : first);
     r.emit(b_to(r.cur, addr + 4));
     const uint64_t stub = r.emit(kPushX16X17);
     r.emit(movz_w16(index));

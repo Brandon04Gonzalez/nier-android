@@ -170,10 +170,13 @@ struct Decoder {
     };
     std::deque<Input> to_codec;  // sent by the game, not yet taken by the codec
     int32_t color = 0, codec_stride = 0, codec_rows = 0, crop_left = 0, crop_top = 0;
+    bool has_planes = false;
+    uint32_t plane_off[3] = {}, plane_col[3] = {}, plane_row[3] = {};
     std::string codec_name;
     bool is_planar = false;
     bool eos_sent = false;   // the game's end of stream went to the codec
     bool codec_eos = false;  // the end-of-stream picture came out
+    bool sw_fallback = false;
 #endif
 
     // CriVpdSwitch puts its UV texture right after width x height bytes of Y, whatever offsets we report: rows of
@@ -218,6 +221,28 @@ constexpr int32_t kColorI420 = 19, kColorNV12 = 21, kColorFlexible = 0x7F420888,
 // Qualcomm/MediaTek variants with aligned strides, which is what ByteBuffer decoders hand out).
 void to_nv12(const Decoder& d, const uint8_t* src, size_t size, std::vector<uint8_t>& out) {
     const int32_t w = d.width, h = d.height;
+    if (d.has_planes) {  // the layout the codec described: any planar or semi-planar YUV 4:2:0, U/V in either order
+        out.resize(size_t(w) * h * 3 / 2);
+        diag::movie_frame_alloc(out.size(), out.capacity());
+        const uint64_t yo = d.plane_off[0] + uint64_t(d.crop_top) * d.plane_row[0] + uint64_t(d.crop_left) * d.plane_col[0];
+        for (int32_t r = 0; r < h; r++) {
+            const uint64_t at = yo + uint64_t(r) * d.plane_row[0];
+            if (at + uint64_t(w - 1) * d.plane_col[0] >= size) return;
+            if (d.plane_col[0] == 1) std::memcpy(out.data() + size_t(r) * w, src + at, size_t(w));
+            else for (int32_t x = 0; x < w; x++) out[size_t(r) * w + x] = src[at + uint64_t(x) * d.plane_col[0]];
+        }
+        uint8_t* uv = out.data() + size_t(w) * h;
+        const uint64_t uo = d.plane_off[1] + uint64_t(d.crop_top / 2) * d.plane_row[1] + uint64_t(d.crop_left / 2) * d.plane_col[1];
+        const uint64_t vo = d.plane_off[2] + uint64_t(d.crop_top / 2) * d.plane_row[2] + uint64_t(d.crop_left / 2) * d.plane_col[2];
+        for (int32_t r = 0; r < h / 2; r++) {
+            const uint64_t ua = uo + uint64_t(r) * d.plane_row[1], va = vo + uint64_t(r) * d.plane_row[2];
+            if (ua + uint64_t(w / 2 - 1) * d.plane_col[1] >= size || va + uint64_t(w / 2 - 1) * d.plane_col[2] >= size) return;
+            uint8_t* row = uv + size_t(r) * w;
+            for (int32_t x = 0; x < w / 2; x++)
+                row[2 * x] = src[ua + uint64_t(x) * d.plane_col[1]], row[2 * x + 1] = src[va + uint64_t(x) * d.plane_col[2]];
+        }
+        return;
+    }
     int32_t stride = d.codec_stride > 0 ? d.codec_stride : w, rows = d.codec_rows > 0 ? d.codec_rows : h;
     if (d.color == kColorQcom32m && d.codec_stride <= 0) stride = (w + 127) & ~127, rows = (h + 31) & ~31;
     out.resize(size_t(w) * h * 3 / 2);
@@ -256,28 +281,40 @@ void read_codec_format(Decoder& d) {
     int32_t l = 0, t = 0, r = 0, b = 0;
     if (AMediaFormat_getRect(f, "crop", &l, &t, &r, &b)) d.crop_left = l, d.crop_top = t;
 
-    // COLOR_FormatYUV420Flexible (0x7F420888) is requested in make_codec().
-    // MediaTek (c2.mtk.*, OMX.MTK.*) and Google software decoders (c2.android.*, OMX.google.*)
-    // output Planar I420 in ByteBuffer mode while leaving color-format as 0x7F420888.
-    // Qualcomm (c2.qti.*, OMX.qcom.*) and Exynos output Semi-Planar NV12.
+    void* img = nullptr;
+    size_t img_size = 0;
+    d.has_planes = false;
+    if (AMediaFormat_getBuffer(f, "image-data", &img, &img_size) && img && img_size >= 4 * (6 + 5 * 3)) {
+        uint32_t m[6 + 5 * 4] = {};
+        std::memcpy(m, img, std::min(img_size, sizeof m));
+        if (m[0] == 1 && m[1] >= 3 && m[4] == 8) {
+            for (int p = 0; p < 3; p++) d.plane_off[p] = m[6 + 5 * p], d.plane_col[p] = m[7 + 5 * p], d.plane_row[p] = m[8 + 5 * p];
+            d.has_planes = d.plane_col[0] >= 1 && d.plane_row[0] >= uint32_t(d.width) && d.plane_col[1] >= 1 && d.plane_col[2] >= 1;
+            log("movie: image layout Y %u/%u/%u U %u/%u/%u V %u/%u/%u (offset/column/row)%s", d.plane_off[0], d.plane_col[0],
+                d.plane_row[0], d.plane_off[1], d.plane_col[1], d.plane_row[1], d.plane_off[2], d.plane_col[2], d.plane_row[2],
+                d.has_planes ? "" : ": not used");
+        }
+    }
+
     if (d.color == kColorI420) {
         d.is_planar = true;
     } else if (d.color == kColorFlexible || d.color == 0) {
-        d.is_planar = (d.codec_name.find(".mtk.") != std::string::npos ||
-                       d.codec_name.find(".MTK.") != std::string::npos ||
+        d.is_planar = (d.codec_name.find("OMX.MTK.") != std::string::npos ||
                        d.codec_name.find(".android.") != std::string::npos ||
                        d.codec_name.find(".google.") != std::string::npos);
     } else {
         d.is_planar = false;
     }
 
-    log("movie: codec output: color format %#x (planar %d), stride %d, slice height %d, crop at %d,%d (%s)", d.color,
-        d.is_planar, d.codec_stride, d.codec_rows, d.crop_left, d.crop_top, AMediaFormat_toString(f));
+    log("movie: codec output: color format %#x (planar %d, planes %d), stride %d, slice height %d, crop at %d,%d (%s)", d.color,
+        d.is_planar, d.has_planes, d.codec_stride, d.codec_rows, d.crop_left, d.crop_top, AMediaFormat_toString(f));
     diag::movie_buffers(uint64_t(output_slots()), d.nv12_size(),
                         uint64_t(d.max_input > 0 ? d.max_input : 0), uint64_t(d.codec_stride),
                         uint64_t(d.codec_rows));
     AMediaFormat_delete(f);
 }
+
+AMediaCodec* make_codec(Decoder& d, bool force_sw = false);
 
 // Feeds the codec what it will take, then takes its pictures into free output slots (waiting up to `wait_us` for the
 // first). True when an output became ready.
@@ -305,6 +342,17 @@ bool pump(Decoder& d, int64_t wait_us) {
             continue;
         }
         if (o == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED) continue;
+        if (o < -10 && !d.sw_fallback) {
+            d.sw_fallback = true;
+            AMediaCodec_stop(d.codec);
+            AMediaCodec_delete(d.codec);
+            d.codec = make_codec(d, true);
+            if (d.codec && AMediaCodec_start(d.codec) != AMEDIA_OK) {
+                AMediaCodec_delete(d.codec);
+                d.codec = nullptr;
+            }
+            break;
+        }
         if (o < 0) break;
         size_t size = 0;
         uint8_t* buf = AMediaCodec_getOutputBuffer(d.codec, size_t(o), &size);
@@ -335,33 +383,41 @@ bool pump(Decoder& d, int64_t wait_us) {
 }
 
 // The device's VP9 decoder, configured for the video (null: none, black frames).
-AMediaCodec* make_codec(Decoder& d) {
-    AMediaCodec* c = AMediaCodec_createDecoderByType("video/x-vnd.on2.vp9");
-    if (!c) return nullptr;
-    AMediaFormat* f = AMediaFormat_new();
-    AMediaFormat_setString(f, AMEDIAFORMAT_KEY_MIME, "video/x-vnd.on2.vp9");
-    AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_WIDTH, d.width);
-    AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_HEIGHT, d.height);
-    AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_MAX_INPUT_SIZE, d.max_input);
-    AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_COLOR_FORMAT, 0x7F420888);  // COLOR_FormatYUV420Flexible
-    media_status_t st = AMediaCodec_configure(c, f, nullptr, nullptr, 0);
-    AMediaFormat_delete(f);
-    if (st != AMEDIA_OK) {
-        log("movie: the VP9 decoder refused %dx%d (%d): black frames", d.width, d.height, int(st));
-        AMediaCodec_delete(c);
-        return nullptr;
+AMediaCodec* make_codec(Decoder& d, bool force_sw) {
+    auto configure_one = [&](AMediaCodec* c) -> AMediaCodec* {
+        if (!c) return nullptr;
+        AMediaFormat* f = AMediaFormat_new();
+        AMediaFormat_setString(f, AMEDIAFORMAT_KEY_MIME, "video/x-vnd.on2.vp9");
+        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_WIDTH, d.width);
+        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_HEIGHT, d.height);
+        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_MAX_INPUT_SIZE, d.max_input);
+        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_COLOR_FORMAT, 0x7F420888);  // COLOR_FormatYUV420Flexible
+        media_status_t st = AMediaCodec_configure(c, f, nullptr, nullptr, 0);
+        AMediaFormat_delete(f);
+        if (st != AMEDIA_OK) {
+            AMediaCodec_delete(c);
+            return nullptr;
+        }
+        char* name = nullptr;
+        if (AMediaCodec_getName(c, &name) == AMEDIA_OK && name) {
+            log("movie: VP9 decoder %s", name);
+            d.codec_name = name;
+            d.is_planar = (d.codec_name.find("OMX.MTK.") != std::string::npos ||
+                           d.codec_name.find(".android.") != std::string::npos ||
+                           d.codec_name.find(".google.") != std::string::npos);
+            AMediaCodec_releaseName(c, name);
+        }
+        return c;
+    };
+    if (!force_sw) {
+        if (AMediaCodec* c = configure_one(AMediaCodec_createDecoderByType("video/x-vnd.on2.vp9"))) return c;
     }
-    char* name = nullptr;
-    if (AMediaCodec_getName(c, &name) == AMEDIA_OK && name) {
-        log("movie: VP9 decoder %s", name);
-        d.codec_name = name;
-        d.is_planar = (d.codec_name.find(".mtk.") != std::string::npos ||
-                       d.codec_name.find(".MTK.") != std::string::npos ||
-                       d.codec_name.find(".android.") != std::string::npos ||
-                       d.codec_name.find(".google.") != std::string::npos);
-        AMediaCodec_releaseName(c, name);
+    const char* sw_names[2] = {"c2.android.vp9.decoder", "OMX.google.vp9.decoder"};
+    for (const char* sw : sw_names) {
+        if (AMediaCodec* c = configure_one(AMediaCodec_createCodecByName(sw))) return c;
     }
-    return c;
+    log("movie: no working VP9 decoder for %dx%d: black frames", d.width, d.height);
+    return nullptr;
 }
 #endif
 

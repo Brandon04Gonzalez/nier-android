@@ -139,6 +139,9 @@ uint64_t g_staging_count = 0, g_staging_bytes = 0;  // staging_alloc's buffers, 
 VkBuffer g_ring = VK_NULL_HANDLE;
 uint8_t* g_ring_ptr = nullptr;
 uint64_t g_ring_size = 0, g_head = 0, g_tail = 0, g_begin = 0;
+VkBuffer g_spill_buf = VK_NULL_HANDLE;
+uint8_t* g_spill_ptr = nullptr;
+uint64_t g_spill_size = 0, g_spill_used = 0;
 
 // Images of destroyed textures, with the serial of the last submit that may still use them.
 std::mutex g_grave_lock;
@@ -478,6 +481,7 @@ VkCommandBuffer frame_begin(bool replay) {
     s.pool_used = true;
     g_next = (g_next + 1) % g_slot_count;
     g_begin = g_head;
+    g_spill_buf = VK_NULL_HANDLE, g_spill_ptr = nullptr, g_spill_size = g_spill_used = 0;
     s.replay = replay, s.part = s.queued = s.waited = 0, s.split_part = -1, s.ok = true;
     s.begin_ns = plat::monotonic_ns();
     g_plan_dispatches = g_seen_dispatches = 0;
@@ -673,10 +677,51 @@ void frame_log(uint64_t frames) {
 }
 
 Upload frame_upload_alloc(uint64_t size, uint64_t align) {
+    auto try_spill = [&](uint64_t sz, uint64_t al) -> Upload {
+        uint64_t sat = (g_spill_used + al - 1) & ~(al - 1);
+        if (g_spill_buf && sat + sz <= g_spill_size) {
+            g_spill_used = sat + sz;
+            return {g_spill_buf, sat, g_spill_ptr + sat};
+        }
+        uint64_t cap = std::max<uint64_t>((sz + al + 0xFFFFFull) & ~0xFFFFFull, 16ull << 20);
+        VkDevice d = vk_device();
+        VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bi.size = cap;
+        bi.usage = kUploadUsage;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (p_vkCreateBuffer(d, &bi, nullptr, &buffer) != VK_SUCCESS) return {};
+        VkMemoryRequirements req{};
+        p_vkGetBufferMemoryRequirements(d, buffer, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex =
+            memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        void* p = nullptr;
+        if (p_vkAllocateMemory(d, &ai, nullptr, &memory) != VK_SUCCESS || p_vkBindBufferMemory(d, buffer, memory, 0) ||
+            p_vkMapMemory(d, memory, 0, VK_WHOLE_SIZE, 0, &p) != VK_SUCCESS) {
+            p_vkDestroyBuffer(d, buffer, nullptr);
+            if (memory) p_vkFreeMemory(d, memory, nullptr);
+            return {};
+        }
+        {
+            std::lock_guard lk(g_grave_lock);
+            g_staging.push_back({g_submitted + 1, buffer, memory});
+        }
+        g_staging_count++, g_staging_bytes += cap;
+        g_spill_buf = buffer, g_spill_ptr = static_cast<uint8_t*>(p), g_spill_size = cap, g_spill_used = sz;
+        log("nvn/vk: upload ring full (%llu MB in this submit): spilled %llu MB",
+            (unsigned long long)((g_head - g_begin) >> 20), (unsigned long long)(cap >> 20));
+        return {g_spill_buf, 0, g_spill_ptr};
+    };
+    if (g_spill_buf) {
+        if (Upload u = try_spill(size, align); u.buffer) return u;
+    }
     uint64_t at = (g_head + align - 1) & ~(align - 1);
     if (at % g_ring_size + size > g_ring_size) at += g_ring_size - at % g_ring_size;  // never split: the next lap
     while (at + size > g_tail + g_ring_size)  // the oldest submits' data is still read: wait for them
         if (!retire_oldest()) {
+            if (Upload u = try_spill(size, align); u.buffer) return u;
             // The submit's parts queued so far may still read its data: wait for them first.
             if (g_current && g_current->waited < g_current->part) {
                 VkFence fences[kMaxParts];
@@ -684,7 +729,7 @@ Upload frame_upload_alloc(uint64_t size, uint64_t align) {
                 g_current->waited = g_current->part;
             }
             log("nvn/vk: upload buffer full (%llu bytes in this submit)", (unsigned long long)(at + size - g_begin));
-            g_tail = at + size - g_ring_size;  // this submit wraps over its own first data, as the synchronous path
+            g_tail = at;  // reclaim a full lap when spill allocation is unavailable
             replay::dedup_reset();
             break;
         }

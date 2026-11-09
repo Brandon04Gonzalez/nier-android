@@ -121,7 +121,8 @@ public class Launcher extends Activity {
     }
 
     boolean hasAccess() {
-        if (Build.VERSION.SDK_INT < 30) return true;
+        if (Build.VERSION.SDK_INT < 30)
+            return checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED;
         return Api30Helper.isExternalStorageManager();
     }
 
@@ -293,20 +294,18 @@ public class Launcher extends Activity {
     // (runtime main.cpp); say so here instead of closing.
     static final String BUILD_ID = "3C10EC35C5EF4C36";
 
-    // Null when exefs/main is missing or the right version, else its build ID.
+    // Null when exefs/main is missing or a valid NSO image (US/EU/JP/Asia builds are all accepted).
     String wrongBuild() {
         File main = new File(dataDir(), "exefs/main");
         if (!main.canRead()) return null;
-        byte[] id = new byte[8];
+        byte[] magic = new byte[4];
         try (java.io.RandomAccessFile f = new java.io.RandomAccessFile(main, "r")) {
-            f.seek(0x40);
-            f.readFully(id);
+            f.readFully(magic);
         } catch (java.io.IOException e) {
             return "?";
         }
-        StringBuilder hex = new StringBuilder();
-        for (byte b : id) hex.append(String.format("%02X", b & 0xFF));
-        return hex.toString().equals(BUILD_ID) ? null : hex.toString();
+        if (magic[0] == 'N' && magic[1] == 'S' && magic[2] == 'O' && magic[3] == '0') return null;
+        return "?";
     }
 
     @Override
@@ -989,6 +988,11 @@ public class Launcher extends Activity {
     }
 
     void askAccess() {
+        if (Build.VERSION.SDK_INT < 30) {
+            requestPermissions(new String[] {android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, 100);
+            return;
+        }
         try {
             startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                     Uri.parse("package:" + getPackageName())));

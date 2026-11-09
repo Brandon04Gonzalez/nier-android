@@ -226,14 +226,10 @@ void boot() {
         }
         // The game's own build (game::kInfo.main_build_id; the P5R list this came with named P5R's builds only, so
         // every NieR dump was refused).
-        bool allow_any = std::getenv("NX_ALLOW_ANY_BUILD") || std::getenv("NX_IGNORE_VERSION");
         if (have.compare(0, std::strlen(want), want) == 0) {
             log("nier: main build %s recognized and supported", have.c_str());
-        } else if (allow_any) {
-            log("nier: main build %s allowed by NX_ALLOW_ANY_BUILD switch", have.c_str());
         } else {
-            fatal("exefs/main is build %s, not %s: this port is made for NieR:Automata 1.0.3. Set NX_ALLOW_ANY_BUILD=1 to "
-                  "override.", have.c_str(), want);
+            log("nier: main build %s (expected %s): continuing with signature-checked hooks", have.c_str(), want);
         }
     }
 

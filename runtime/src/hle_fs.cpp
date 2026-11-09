@@ -121,6 +121,9 @@ std::string utf8(const fs::path& p) {
 
 std::string cstr(uint64_t p) { return p ? std::string(reinterpret_cast<const char*>(p)) : std::string(); }
 
+std::map<std::string, bool> g_image_mounts;
+fs::path mod_file(const std::string& rel);
+
 // "mount:/a/b" -> host path; empty when the mount is unknown.
 fs::path resolve(const std::string& guest) {
     auto colon = guest.find(':');
@@ -129,6 +132,10 @@ fs::path resolve(const std::string& guest) {
     if (it == g_mounts.end()) return {};
     std::string rest = guest.substr(colon + 1);
     while (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest.erase(0, 1);
+    if (g_image_mounts.count(it->first) || it->first == "rom") {
+        fs::path m = mod_file(game_image_path(rest));
+        if (!m.empty()) return m;
+    }
     return it->second / fs::u8path(rest);
 }
 
@@ -137,10 +144,6 @@ void mount(const std::string& name, const fs::path& p) {
     g_mounts[name] = p;
     log("fs: mounted %s: -> %s", name.c_str(), p.string().c_str());
 }
-
-// Mounts served from the game image (the RomFS read in place). They keep a host folder in g_mounts too, only so the
-// runtime's virtual files (add_virtual_file) still match their paths.
-std::map<std::string, bool> g_image_mounts;
 
 // The RomFS path of `guest` when its mount is served from the game image.
 bool image_rel(const std::string& guest, std::string& rel) {

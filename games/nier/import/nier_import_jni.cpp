@@ -101,7 +101,7 @@ int run(int base_fd, const std::string& base_name, int update_fd, const std::str
     if (tfd >= 0) in.push_back({"title.keys", tfd});
     nxi::Options opt;
     opt.out_dir = data_dir;
-    opt.title_id = kTitle;
+    opt.title_id = 0;  // accept any regional base/update pair (010056B015FE8000 US/EU/JP, 0100B8E016F76000 Asia)
     opt.keep_exefs = true;
     opt.cancel = &g_cancel;
     opt.on_progress = [](const nxi::Progress& p) {
@@ -115,9 +115,6 @@ int run(int base_fd, const std::string& base_name, int update_fd, const std::str
     if (rc != 0) return fail(err);
     std::string id = build_id(data_dir + "/exefs/main");
     if (id.empty()) return fail("the import wrote no exefs/main");
-    if (id != kBuild)
-        return fail("exefs/main is build " + id + ", not NieR:Automata 1.0.3 (" + kBuild +
-                    "): pick update 1.0.3 (v131072) together with the base game");
     // 2. the shaders out of the game
     g_phase = 2, g_done = 0, g_total = 0;
     remove_tree(work_dir);

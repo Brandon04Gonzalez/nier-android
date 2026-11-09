@@ -43,7 +43,11 @@ std::shared_ptr<Service> make_service(const std::string& name) {
 uint32_t Service::handle(IpcCtx& ctx) {
     auto it = cmds.find(ctx.cmd);
     if (it != cmds.end()) return it->second(ctx);
-    log("ipc: %s cmd %u not implemented (stub ok)", name.c_str(), ctx.cmd);
+    static std::map<std::pair<std::string, uint32_t>, bool> logged;
+    if (!logged[{name, ctx.cmd}]) {
+        logged[{name, ctx.cmd}] = true;
+        log("ipc: %s cmd %u not implemented (stub ok)", name.c_str(), ctx.cmd);
+    }
     return 0;
 }
 
