@@ -683,6 +683,14 @@ Upload frame_upload_alloc(uint64_t size, uint64_t align) {
             g_spill_used = sat + sz;
             return {g_spill_buf, sat, g_spill_ptr + sat};
         }
+#if defined(__ANDROID__)
+        // If this submit has already spilled >= 48 MB, avoid runaway VkDeviceMemory allocations
+        // that trigger Android's Low Memory Killer (LMK) or GPU driver out-of-memory.
+        static const uint64_t kMaxSpillBytes = 48ull << 20;
+        if (g_spill_size && (g_head - g_begin) > (frame_ring_size() + kMaxSpillBytes)) {
+            return {};
+        }
+#endif
         uint64_t cap = std::max<uint64_t>((sz + al + 0xFFFFFull) & ~0xFFFFFull, 16ull << 20);
         VkDevice d = vk_device();
         VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};

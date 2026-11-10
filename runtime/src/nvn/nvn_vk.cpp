@@ -329,7 +329,15 @@ bool init() {
     // spills bigger uploads to staging buffers in proportion to the ring).
     {
 #if defined(__ANDROID__)
-        uint64_t ring_mb = 64;
+        uint64_t ring_mb = 96;
+#if defined(_SC_PHYS_PAGES) && defined(_SC_PAGESIZE)
+        double ram_gb = double(sysconf(_SC_PHYS_PAGES)) * double(sysconf(_SC_PAGESIZE)) / double(1ull << 30);
+        if (ram_gb >= 7.0) {
+            ring_mb = 128;  // 8GB+ phones: large maps need 128MB to prevent upload ring spills
+        } else if (ram_gb < 5.0) {
+            ring_mb = 64;   // 4GB devices: conserve memory
+        }
+#endif
 #else
         uint64_t ring_mb = 256;
 #endif
