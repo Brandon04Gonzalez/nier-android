@@ -204,6 +204,15 @@ final class Lang {
         put("Saves imported", "Sauvegardes importées", "Spielstände importiert", "Salvataggi importati",
                 "Jogos salvos importados", "セーブデータをインポートしました", "저장 데이터를 가져왔습니다", "存档已导入",
                 "存檔已匯入");
+        put("\n\nPC saves were automatically converted to Switch format.",
+                "\n\nLes sauvegardes PC ont été automatiquement converties au format Switch.",
+                "\n\nPC-Spielstände wurden automatisch in das Switch-Format konvertiert.",
+                "\n\nI salvataggi PC sono stati convertiti automaticamente nel formato Switch.",
+                "\n\nOs jogos salvos do PC foram convertidos automaticamente para o formato do Switch.",
+                "\n\nPC のセーブデータが自動的に Switch 形式に変換されました。",
+                "\n\nPC 저장 데이터가 Switch 형식으로 자동 변환되었습니다.",
+                "\n\nPC 存档已自动转换为 Switch 格式。",
+                "\n\nPC 存檔已自動轉換為 Switch 格式。");
         put("%d files (%s). The game loads them at its next start.",
                 "%d fichiers (%s). Le jeu les charge à son prochain démarrage.",
                 "%d Dateien (%s). Das Spiel lädt sie beim nächsten Start.",

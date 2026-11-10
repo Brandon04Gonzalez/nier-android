@@ -53,12 +53,12 @@ const Named kWonder[] = {
 };
 
 const Named kP5R[] = {
-    {"A", {0.940f, 0.66f, 0.068f, kA, touch_label(kGlyphA)}},
-    {"B", {0.875f, 0.80f, 0.068f, kB, touch_label(kGlyphB)}},
-    {"X", {0.875f, 0.52f, 0.068f, kX, touch_label(kGlyphX)}},
-    {"Y", {0.810f, 0.66f, 0.068f, kY, touch_label(kGlyphY)}},
-    {"R", {0.945f, 0.08f, 0.052f, kR, touch_label(kGlyphR)}},
-    {"ZR", {0.945f, 0.24f, 0.052f, kZR, touch_label(kGlyphZ, kGlyphR)}},
+    {"A", {0.925f, 0.66f, 0.068f, kA, touch_label(kGlyphA)}},
+    {"B", {0.860f, 0.80f, 0.068f, kB, touch_label(kGlyphB)}},
+    {"X", {0.860f, 0.52f, 0.068f, kX, touch_label(kGlyphX)}},
+    {"Y", {0.795f, 0.66f, 0.068f, kY, touch_label(kGlyphY)}},
+    {"R", {0.930f, 0.08f, 0.052f, kR, touch_label(kGlyphR)}},
+    {"ZR", {0.930f, 0.24f, 0.052f, kZR, touch_label(kGlyphZ, kGlyphR)}},
     {"L", {0.055f, 0.08f, 0.052f, kL, touch_label(kGlyphL)}},
     {"ZL", {0.055f, 0.24f, 0.052f, kZL, touch_label(kGlyphZ, kGlyphL)}},
     {"MINUS", {0.440f, 0.07f, 0.045f, kMinus, touch_label(kGlyphMinus)}},
@@ -198,6 +198,7 @@ bool touch_stick_side(float x) {
 uint64_t touch_stick_full_button() { return layout() ? layout()->stick_full : 0; }
 
 uint64_t touch_hit(float x, float y, float aspect) {
+    if (x > 0.985f) return 0;  // palm/finger edge reject on the extreme right bezel
     size_t n = 0;
     const TouchButton* b = touch_buttons(n);
     uint64_t best = 0;
@@ -207,7 +208,7 @@ uint64_t touch_hit(float x, float y, float aspect) {
     for (size_t k = 0; k < n; k++) {
         float d = std::hypot((x - b[k].x) * aspect, y - b[k].y) / b[k].r;
         if ((b[k].button & kDpadMask) && d < 1.55f) dpad_hits |= b[k].button;
-        if (d < 1.35f && d < best_d) best = b[k].button, best_d = d;  // a little past the drawn edge still counts
+        if (d < 1.22f && d < best_d) best = b[k].button, best_d = d;  // a little past the drawn edge still counts
     }
     if (best & kDpadMask) return dpad_hits;
     return best;

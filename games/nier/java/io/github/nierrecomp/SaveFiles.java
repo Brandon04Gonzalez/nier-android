@@ -7,6 +7,7 @@ import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -30,19 +31,22 @@ import java.util.zip.ZipOutputStream;
 /**
  * The game's saves, imported and exported from the home screen. They live in Internal storage/NieR Automata/user/save
  * as on the Switch: the GameData file and a SlotData_<n> file per slot, in one folder. An import takes a ZIP or a folder
- * (as JKSV or Checkpoint export a Switch save, or as another player's export), finds the folder that holds those files
+ * (as JKSV or Checkpoint export a Switch save, or PC saves like SlotData_0.dat), finds the folder that holds those files
  * wherever it sits inside, copies the current saves to user/save_backup_<date> first, then writes everything in that
- * folder over them (files it does not bring stay). An export writes Download/NieR-saves-<date>.zip (the whole save
- * folder), which imports back as is.
+ * folder over them (files it does not bring stay). Saves from PC (.dat files or saves with SteamID headers) are
+ * automatically converted to Switch format. An export writes Download/NieR-saves-<date>.zip (the whole save folder),
+ * which imports back as is.
  */
 final class SaveFiles {
     // A file the game keeps in its save folder: what marks the folder to import inside a ZIP or a picked folder.
-    static final Pattern MARK = Pattern.compile("(?:^|/)(GameData|SystemData|SlotData_\\d+)$");
+    // Matches Switch saves (no extension) and PC saves (.dat extension).
+    static final Pattern MARK = Pattern.compile("(?:^|/)(GameData|SystemData|SlotData_\\d+)(?:\\.dat)?$", Pattern.CASE_INSENSITIVE);
     static final long MAX_BYTES = 256L << 20;  // a save is a few MB at most: anything bigger is not one
 
     /** What an import did: files written, the game's save files among them, the backup folder (null: nothing kept). */
     static final class Result {
         int files;
+        int converted;
         final TreeSet<String> saves = new TreeSet<>();
         String backup;
     }
@@ -80,6 +84,13 @@ final class SaveFiles {
         for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
     }
 
+    static byte[] readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[1 << 16];
+        for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+        return out.toByteArray();
+    }
+
     static void copyTree(File from, File to) throws IOException {
         if (from.isDirectory()) {
             if (!to.isDirectory() && !to.mkdirs()) throw new IOException("cannot make " + to);
@@ -108,15 +119,130 @@ final class SaveFiles {
         return name;
     }
 
+    /**
+     * Normalizes save file names from PC to Switch by stripping the .dat extension if it matches a save pattern.
+     */
+    static String normalizeSaveName(String rel) {
+        if (rel.toLowerCase(Locale.ROOT).endsWith(".dat")) {
+            String withoutDat = rel.substring(0, rel.length() - 4);
+            int slash = withoutDat.lastIndexOf('/');
+            String base = slash >= 0 ? withoutDat.substring(slash + 1) : withoutDat;
+            if (base.matches("(?i)GameData|SystemData|SlotData_\\d+")) {
+                return withoutDat;
+            }
+        }
+        return rel;
+    }
+
+    /**
+     * Converts PC save headers to Switch format by clearing the SteamID64 field.
+     * Switch saves use all zeros for this field, whereas PC has an 8-byte SteamID64.
+     * Returns true if any header bytes were zeroed out.
+     */
+    static boolean convertSaveData(String filename, byte[] data) {
+        if (data == null) return false;
+        int slash = filename.lastIndexOf('/');
+        String base = slash >= 0 ? filename.substring(slash + 1) : filename;
+        boolean changed = false;
+
+        // SlotData_0, SlotData_1, etc.
+        // Size: 235980 bytes. Header: 0..4 (zeros), 4..12 (SteamID64 on PC, 0 on Switch), 12..16 (magic 0x09025954)
+        if (base.matches("(?i)SlotData_\\d+")) {
+            if (data.length >= 12) {
+                for (int i = 4; i < 12; i++) {
+                    if (data[i] != 0) {
+                        data[i] = 0;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        // GameData
+        // Size: 1128 bytes. Header: 0..8 (SteamID64 on PC, 0 on Switch), 8..12 (magic 0x09025954)
+        else if (base.equalsIgnoreCase("GameData")) {
+            if (data.length >= 8) {
+                for (int i = 0; i < 8; i++) {
+                    if (data[i] != 0) {
+                        data[i] = 0;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        // SystemData
+        // Size: 72 bytes. Header: 0..8 (SteamID64 on PC, 0 on Switch)
+        else if (base.equalsIgnoreCase("SystemData")) {
+            if (data.length >= 8) {
+                for (int i = 0; i < 8; i++) {
+                    if (data[i] != 0) {
+                        data[i] = 0;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        return changed;
+    }
+
     static void write(Result r, String rel, InputStream in) throws IOException {
-        File out = new File(saveDir(), rel);
+        String destRel = normalizeSaveName(rel);
+        boolean isPcExt = !destRel.equalsIgnoreCase(rel);
+        File out = new File(saveDir(), destRel);
         File dir = out.getParentFile();
         if (dir != null && !dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot make " + dir);
+
+        byte[] data = readAll(in);
+        boolean dataConverted = convertSaveData(destRel, data);
+        if (isPcExt || dataConverted) {
+            r.converted++;
+        }
+
         try (OutputStream o = new FileOutputStream(out)) {
-            copy(in, o);
+            o.write(data);
         }
         r.files++;
-        if (rel.indexOf('/') < 0 && MARK.matcher(rel).find()) r.saves.add(rel);
+        if (destRel.indexOf('/') < 0 && MARK.matcher(destRel).find()) r.saves.add(destRel);
+    }
+
+    /**
+     * Checks the user save folder for PC save files (*.dat or files with SteamID headers)
+     * and converts them in-place to native Switch format.
+     * Returns the count of converted files.
+     */
+    static int convertExistingSaves() {
+        File dir = saveDir();
+        if (!dir.isDirectory()) return 0;
+        File[] files = dir.listFiles();
+        if (files == null) return 0;
+        int converted = 0;
+        for (File f : files) {
+            if (!f.isFile()) continue;
+            String name = f.getName();
+            String norm = normalizeSaveName(name);
+            boolean isDat = !norm.equals(name);
+
+            if (!MARK.matcher(name).find() && !MARK.matcher(norm).find()) continue;
+
+            try {
+                byte[] data;
+                try (InputStream in = new FileInputStream(f)) {
+                    data = readAll(in);
+                }
+                boolean dataChanged = convertSaveData(norm, data);
+                if (isDat || dataChanged) {
+                    File target = new File(dir, norm);
+                    try (OutputStream out = new FileOutputStream(target)) {
+                        out.write(data);
+                    }
+                    if (isDat && !target.equals(f)) {
+                        f.delete();
+                    }
+                    converted++;
+                }
+            } catch (IOException ignored) {}
+        }
+        return converted;
     }
 
     /** Null when the ZIP holds no saves. */

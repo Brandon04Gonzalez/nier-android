@@ -566,6 +566,7 @@ public class Launcher extends Activity {
                     nextStep();
                     return;
                 }
+                SaveFiles.convertExistingSaves();
                 save();
                 startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
             }
@@ -578,6 +579,9 @@ public class Launcher extends Activity {
 
     void refresh() {
         load();
+        if (hasAccess() && dataReady()) {
+            SaveFiles.convertExistingSaves();
+        }
         for (Option o : options) {
             String v = config.get(o.key);
             if ("RESOLUTION".equals(o.key) && v == null) {
@@ -646,10 +650,10 @@ public class Launcher extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle(t("Importar partidas", "Import saves"))
                 .setMessage(t("Elige un archivo ZIP o una carpeta con partidas de NieR Automata (los archivos GameData y "
-                                + "SlotData_0, SlotData_1..., como los exporta JKSV o Checkpoint, o el ZIP que exporta "
-                                + "este botón). Antes se guarda una copia de tus partidas actuales.",
+                                + "SlotData_0, SlotData_1..., de Switch o de PC .dat: se convierten automáticamente). "
+                                + "Antes se guarda una copia de tus partidas actuales.",
                         "Pick a ZIP file or a folder with NieR Automata saves (the GameData and SlotData_0, SlotData_1... "
-                                + "files, as JKSV or Checkpoint export them, or the ZIP the Export button makes). Your "
+                                + "files, from Switch or PC .dat: converted automatically). Your "
                                 + "current saves are copied aside first."))
                 .setPositiveButton(t("Archivo ZIP", "ZIP file"), new DialogInterface.OnClickListener() {
                     @Override
@@ -679,16 +683,18 @@ public class Launcher extends Activity {
             if (r == null) {
                 tell(t("No hay partidas", "No saves found"),
                         t("Ahí no encontré partidas de NieR Automata: busca los archivos GameData o SlotData_0, "
-                                        + "SlotData_1...",
-                                "No NieR Automata saves there: look for the GameData or SlotData_0, SlotData_1... files."));
+                                        + "SlotData_1... (en formato Switch o de PC .dat)",
+                                "No NieR Automata saves there: look for the GameData or SlotData_0, SlotData_1... files (Switch or PC .dat format)."));
                 return;
             }
             String kept = r.backup == null ? "" : Lang.f("\n\nTus partidas anteriores quedaron en user/%s.",
                     "\n\nYour previous saves are in user/%s.", r.backup);
+            String pcNote = r.converted > 0 ? t("\n\nSe convirtieron partidas de PC al formato de Switch automáticamente.",
+                    "\n\nPC saves were automatically converted to Switch format.") : "";
             tell(t("Partidas importadas", "Saves imported"),
                     Lang.f("%d archivos (%s). El juego los carga en su próximo inicio.",
                             "%d files (%s). The game loads them at its next start.", r.files,
-                            android.text.TextUtils.join(", ", r.saves)) + kept);
+                            android.text.TextUtils.join(", ", r.saves)) + pcNote + kept);
         } catch (Exception e) {
             tell(t("No se pudo importar", "Import failed"), String.valueOf(e.getMessage()));
         }
@@ -1059,7 +1065,8 @@ public class Launcher extends Activity {
             config.put("NX_RENDER_RES", "720p");
             config.put("NX_RES", "720p");
         }
-        for (String k : new String[] {"RENDER_SCALE", "NX_ANISO_MAX", "NX_LOD_BIAS"}) config.remove(k);
+        for (String k : new String[] {"RENDER_SCALE", "NX_ANISO_MAX", "NX_LOD_BIAS",
+                "NX_INPUT_SCRIPT", "NX_INPUT", "NX_INPUT_RECORD"}) config.remove(k);
         final String preset = config.get("GRAPHICS");
         if ("low".equals(preset)) config.put("NX_LOD_BIAS", "1");
         else if ("medium".equals(preset)) config.put("NX_LOD_BIAS", "0.5");
