@@ -470,3 +470,12 @@ untime/src/platform_android.cpp: open_custom_vulkan() carga el driver Turnip con
 untime/src/hle_fs.cpp: sustitución de std::mutex g_fs; por std::recursive_mutex g_fs; para evitar bloqueos por reentrancia de hilos al acceder a archivos.
 3. **Exportación segura de registros (Commit 98004d7)**:
    - Integrado LogProvider.java (content://io.github.nierrecomp.logprovider) y registrado en AndroidManifest.xml para compartir Download/nier-log.txt sin FileUriExposedException ni bloqueos de scoped storage en Android 7+.
+
+### 2026-11-11: Arreglo de esquiva/dash continuo fantasma (v0.2.5 - versionCode 7)
+
+1. **Servicio `hid` e implementación de `IsSixAxisSensorAtRest` (cmd 82)**:
+   - `runtime/src/svc_misc.cpp`: Registrado el servicio `hid` (y alias `hid:sys`, `hid:dbg`, `hid:tmp`) e implementado el comando IPC 82 (`IsSixAxisSensorAtRest`), devolviendo `isAtRest = 1` (true). Evita que el juego interprete que el mando/consola está en constante agitación y active continuamente la esquiva por movimiento (Issues #13, #15, #18 y reporte en Discord).
+2. **Desacople de SixAxis del stick derecho**:
+   - `runtime/src/hle_hid.cpp`: La inyección de velocidad angular en el sensor SixAxis simulada a partir del stick analógico derecho se restringe únicamente a P5R (`game::kInfo.id == "p5r"`, minijuego de Dardos). En NieR, el stick derecho controla la cámara, por lo que rotar la cámara ya no dispara falsas esquivas por movimiento.
+3. **Versión v0.2.5**:
+   - `games/nier/AndroidManifest.xml`: Versión subida a `0.2.5` (`versionCode="7"`). Compilado APK NCE Release.

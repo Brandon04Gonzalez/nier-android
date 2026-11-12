@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include <nx/game.h>
 #include <nx/runtime.h>
 
 #include "platform.h"
@@ -217,32 +218,40 @@ void populate_sixaxis(uint64_t s) {
     st<float>(s + 0x14, -1.0f);         // acc.y (-1G)
     st<float>(s + 0x18, 0.0f);          // acc.z
 
-    // Read current right-stick / gyro inputs to simulate motion aiming (e.g. Darts minigame)
-    PadState p{};
-    read_pad(p);
-    float rx = float(p.rx) / float(kStickMax);
-    float ry = float(p.ry) / float(kStickMax);
+    // Read current right-stick / gyro inputs to simulate motion aiming (e.g. Darts minigame in P5R).
+    // In NieR, right-stick controls the camera, and feeding it into angular velocity falsely triggers motion evade.
+    float ang_vel_x = 0.0f, ang_vel_y = 0.0f;
+    float cur_angle_x = 0.0f, cur_angle_y = 0.0f;
 
-    static float angle_x = 0.0f, angle_y = 0.0f;
-    static uint64_t last_time = 0;
-    uint64_t now = monotonic_ns();
-    float dt = (last_time && now > last_time) ? float(now - last_time) * 1e-9f : 0.016f;
-    if (dt > 0.1f) dt = 0.016f;
-    last_time = now;
+    if (std::strcmp(game::kInfo.id, "p5r") == 0) {
+        PadState p{};
+        read_pad(p);
+        float rx = float(p.rx) / float(kStickMax);
+        float ry = float(p.ry) / float(kStickMax);
 
-    float ang_vel_x = rx * 3.14159f;   // rad/s
-    float ang_vel_y = ry * 3.14159f;
-    angle_x = std::clamp(angle_x + ang_vel_x * dt, -1.57f, 1.57f);
-    angle_y = std::clamp(angle_y + ang_vel_y * dt, -1.57f, 1.57f);
-    if (std::abs(rx) < 0.05f) angle_x *= 0.95f;
-    if (std::abs(ry) < 0.05f) angle_y *= 0.95f;
+        static float angle_x = 0.0f, angle_y = 0.0f;
+        static uint64_t last_time = 0;
+        uint64_t now = monotonic_ns();
+        float dt = (last_time && now > last_time) ? float(now - last_time) * 1e-9f : 0.016f;
+        if (dt > 0.1f) dt = 0.016f;
+        last_time = now;
+
+        ang_vel_x = rx * 3.14159f;   // rad/s
+        ang_vel_y = ry * 3.14159f;
+        angle_x = std::clamp(angle_x + ang_vel_x * dt, -1.57f, 1.57f);
+        angle_y = std::clamp(angle_y + ang_vel_y * dt, -1.57f, 1.57f);
+        if (std::abs(rx) < 0.05f) angle_x *= 0.95f;
+        if (std::abs(ry) < 0.05f) angle_y *= 0.95f;
+        cur_angle_x = angle_x;
+        cur_angle_y = angle_y;
+    }
 
     st<float>(s + 0x1c, ang_vel_x);     // angularVelocity.x
     st<float>(s + 0x20, ang_vel_y);     // angularVelocity.y
     st<float>(s + 0x24, 0.0f);          // angularVelocity.z
 
-    st<float>(s + 0x28, angle_x);       // angle.x
-    st<float>(s + 0x2c, angle_y);       // angle.y
+    st<float>(s + 0x28, cur_angle_x);   // angle.x
+    st<float>(s + 0x2c, cur_angle_y);   // angle.y
     st<float>(s + 0x30, 0.0f);          // angle.z
 
     // Rotation direction matrix (3x3 float matrix at 0x34..0x54)

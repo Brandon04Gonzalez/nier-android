@@ -126,6 +126,25 @@ ServiceRegistrar r_fspsrv("fsp-srv", [] {
     });
 });
 
+void hid_service(Service& s) {
+    s.cmds[0] = [](IpcCtx& c) {
+        c.push_object(make("IAppletResource", [](Service& a) {
+            a.cmds[82] = [](IpcCtx& c) { c.push<uint8_t>(1); return 0u; };
+        }));
+        return 0u;
+    };
+    // nn::hid::IHidServer cmd 82: IsSixAxisSensorAtRest (sixAxisSensorHandle, appletResourceUserId) -> isAtRest (bool)
+    s.cmds[82] = [](IpcCtx& c) {
+        c.push<uint8_t>(1);  // 1 = true (sensor at rest, prevents phantom motion-evade/dash)
+        return 0u;
+    };
+}
+
+ServiceRegistrar r_hid("hid", [] { return make("hid", hid_service); });
+ServiceRegistrar r_hid_sys("hid:sys", [] { return make("hid:sys", hid_service); });
+ServiceRegistrar r_hid_dbg("hid:dbg", [] { return make("hid:dbg", hid_service); });
+ServiceRegistrar r_hid_tmp("hid:tmp", [] { return make("hid:tmp", hid_service); });
+
 void NgcOk(CPU& c) { c.x[0] = 0; }
 
 void NgcGetContentVersion(CPU& c) {
