@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <string>
 
 #include <nx/game.h>
@@ -158,18 +159,21 @@ void game::after_init() {
     const LoadedModule* m = module_at(find_symbol("nnMain"));
     if (!m) return;
     g_main = m->base;
+    auto matches = [&](uint64_t off, const uint32_t* sig, const uint32_t* mask, size_t n) {
+        if (off < m->info->text || off + 4 * n > m->info->text + m->info->text_size) return false;
+        for (size_t k = 0; k < n; k++) {
+            const uint32_t word = ld<uint32_t>(m->base + off + 4 * k);
+            if ((mask ? word & mask[k] : word) != sig[k]) return false;
+        }
+        return true;
+    };
     auto find_fn = [&](uint64_t hint, const uint32_t* sig, const uint32_t* mask, size_t n) -> uint64_t {
-        auto match = [&](uint64_t off) {
-            if (off < m->info->text || off + 4 * n > m->info->text + m->info->text_size) return false;
-            for (size_t k = 0; k < n; k++)
-                if ((ld<uint32_t>(m->base + off + 4 * k) & mask[k]) != sig[k]) return false;
-            return true;
-        };
-        if (match(hint)) return m->base + hint;
+        if (matches(hint, sig, mask, n)) return m->base + hint;
+        if (m->info->text_size < 4 * n) return 0;
         uint64_t lo = hint > 0x40000 ? std::max<uint64_t>(m->info->text, hint - 0x40000) : m->info->text;
         uint64_t hi = std::min<uint64_t>(m->info->text + m->info->text_size - 4 * n, hint + 0x40000);
         for (uint64_t off = lo; off <= hi; off += 4)
-            if (match(off)) return m->base + off;
+            if (matches(off, sig, mask, n)) return m->base + off;
         return 0;
     };
     const uint32_t vs_sig[6]  = {0x90000008, 0xf9400108, 0xf9400109, 0xb4000089, 0xb9050500, 0x52800020};
@@ -178,15 +182,26 @@ void game::after_init() {
     const uint32_t up_mask[6] = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
     const uint32_t md_sig[6]  = {0xd10183ff, 0xa9027bfd, 0x910083fd, 0xa9035ff8, 0xa90457f6, 0xa9054ff4};
     const uint32_t md_mask[6] = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
+    // In Asia 1.0.3 (main build 98397A1041989465), the short mesh signature also matches earlier functions.
+    // Check the known entry with two more instructions before falling back to the regional scan.
+    constexpr uint64_t md_asia_offset = 0x9d650c;
+    constexpr uint32_t md_asia_sig[] = {
+        0xd10183ff, 0xa9027bfd, 0x910083fd, 0xa9035ff8,
+        0xa90457f6, 0xa9054ff4, 0xb9400ca8, 0x37f81048,
+    };
     uint64_t vs_addr = find_fn(0x9bf1d0, vs_sig, vs_mask, 6);
     uint64_t up_addr = find_fn(0x8fc7a8, up_sig, up_mask, 6);
-    uint64_t md_addr = find_fn(0x9d514c, md_sig, md_mask, 6);
+    const uint64_t md_addr = matches(md_asia_offset, md_asia_sig, nullptr, std::size(md_asia_sig))
+        ? m->base + md_asia_offset
+        : find_fn(0x9d514c, md_sig, md_mask, 6);
     g_is_103 = (vs_addr == m->base + 0x9bf1d0 && ld<uint32_t>(vs_addr) == 0xd0004808u);
     if (vs_addr) g_vsync_setter = hook_function(vs_addr, vsync_hook);
     if (up_addr) g_update = hook_function(up_addr, update_hook);
     if (!g_vsync_setter || !g_update) log("nier: frame-rate hooks not installed (%llx %llx)", (unsigned long long)g_vsync_setter,
                                           (unsigned long long)g_update);
-    if (md_addr && !(g_mesh_draw = hook_function(md_addr, mesh_draw_hook))) log("nier: mesh draw hook not installed");
+    if (md_addr) g_mesh_draw = hook_function(md_addr, mesh_draw_hook);
+    if (!g_mesh_draw) log("nier: mesh draw hook not installed (offset %#llx)",
+                          (unsigned long long)(md_addr ? md_addr - m->base : 0));
 }
 
 }  // namespace nx
