@@ -85,12 +85,15 @@ void vsync_hook(CPU& c) {
 // 0.8333 (0.4 with a config flag) or the game's own override if lower (the float at *(main+0x12c7430), 1 unless the
 // game sets it: main+9bf670). At 720p that floor was 1056x594 and the Adreno 610 stays there. NX_NIER_MIN_SCALE
 // (0.3..1, default 0.6) is written into the override every frame: on a GPU that keeps up nothing changes.
+uint64_t g_asia_resolution_floor_slot = 0;
+
 void resolution_floor() {
     static const float floor = [] {
         const char* e = std::getenv("NX_NIER_MIN_SCALE");
         return std::clamp(e ? float(std::atof(e)) : 0.6f, 0.3f, 1.0f);
     }();
-    if (const uint64_t override_min = (g_main && g_is_103) ? ld<uint64_t>(g_main + 0x12c7430) : 0) {
+    const uint64_t slot = g_is_103 ? g_main + 0x12c7430 : g_asia_resolution_floor_slot;
+    if (const uint64_t override_min = slot ? ld<uint64_t>(slot) : 0) {
         uint32_t u;
         std::memcpy(&u, &floor, 4);
         st<uint32_t>(override_min, u);
@@ -157,6 +160,16 @@ void game::after_init() {
 #endif
     const LoadedModule* m = module_at(find_symbol("nnMain"));
     if (!m) return;
+    // Asia 1.0.3's setter uses a PC-relative reference to the floor slot at main+0x12c8500.
+    // Check the instructions at the known address to validate that reference.
+    constexpr uint64_t asia_floor_setter = 0x9c0a30;
+    constexpr uint32_t asia_floor_sig[] = {0x90004848, 0xf9428108, 0xbd000100, 0xd65f03c0};
+    if (asia_floor_setter >= m->info->text &&
+        asia_floor_setter + sizeof(asia_floor_sig) <= m->info->text + m->info->text_size &&
+        std::memcmp(reinterpret_cast<const void*>(m->base + asia_floor_setter),
+                    asia_floor_sig, sizeof(asia_floor_sig)) == 0) {
+        g_asia_resolution_floor_slot = m->base + 0x12c8500;
+    }
     g_main = m->base;
     auto find_fn = [&](uint64_t hint, const uint32_t* sig, const uint32_t* mask, size_t n) -> uint64_t {
         auto match = [&](uint64_t off) {
