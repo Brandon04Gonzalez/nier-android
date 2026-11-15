@@ -41,6 +41,7 @@ void fputs_logged(CPU& c) {
 // recompiled with --hookable 9bf1d0,8fc7a8) and are hooked here. NX_NIER_FPS=30|60 (default: NX_FPS_CAP, the
 // launcher's, else 30).
 uint64_t g_vsync_setter = 0, g_update = 0, g_main = 0;
+uint64_t g_presenter_offset = 0;
 bool g_is_103 = false;
 
 int target_fps() {
@@ -59,16 +60,14 @@ void vsync_hook(CPU& c) {
     // The presenter starts with mode and applied mode 0 (zeroed memory) while the window was made with the device's
     // interval (+0x9c160, 2): asking 0 from the first frame changed nothing it could see. When the device's interval is
     // not the wanted one, the applied mode is made stale so the next present applies it.
-    if (g_is_103) {
-        if (const uint64_t presenter = ld<uint64_t>(g_main + 0x12c1c48)) {
-            const uint64_t device = ld<uint64_t>(presenter);
-            const uint32_t want = target_fps() >= 60 ? 1 : 2;
-            if (device && ld<uint32_t>(device + 0x9c160) != want) st<uint32_t>(presenter + 0x508, 0xFFFFFFFFu);
-        }
+    const uint64_t presenter = g_presenter_offset ? ld<uint64_t>(g_main + g_presenter_offset) : 0;
+    if (presenter) {
+        const uint64_t device = ld<uint64_t>(presenter);
+        const uint32_t want = target_fps() >= 60 ? 1 : 2;
+        if (device && ld<uint32_t>(device + 0x9c160) != want) st<uint32_t>(presenter + 0x508, 0xFFFFFFFFu);
     }
     static int traced = 0;
     if (std::getenv("NX_NIER_TRACE_VSYNC") && traced++ < 12) {
-        const uint64_t presenter = g_is_103 ? ld<uint64_t>(g_main + 0x12c1c48) : 0;
         log("nier: vsync mode asked %u, set %u (returned %u): presenter %llx mode %u applied %u", asked,
             target_fps() >= 60 ? 0u : 1u, uint32_t(c.x[0]), (unsigned long long)presenter,
             presenter ? ld<uint32_t>(presenter + 0x504) : 0, presenter ? ld<uint32_t>(presenter + 0x508) : 0);
@@ -195,6 +194,10 @@ void game::after_init() {
         ? m->base + md_asia_offset
         : find_fn(0x9d514c, md_sig, md_mask, 6);
     g_is_103 = (vs_addr == m->base + 0x9bf1d0 && ld<uint32_t>(vs_addr) == 0xd0004808u);
+    if (g_is_103) g_presenter_offset = 0x12c1c48;
+    // Asia 1.0.3 has the same presenter fields, with the global loaded from a different address.
+    if (vs_addr == m->base + 0x9c0590 && ld<uint32_t>(vs_addr) == 0xd0004808u &&
+        ld<uint32_t>(vs_addr + 4) == 0xf9468d08u) g_presenter_offset = 0x12c2d18;
     if (vs_addr) g_vsync_setter = hook_function(vs_addr, vsync_hook);
     if (up_addr) g_update = hook_function(up_addr, update_hook);
     if (!g_vsync_setter || !g_update) log("nier: frame-rate hooks not installed (%llx %llx)", (unsigned long long)g_vsync_setter,
