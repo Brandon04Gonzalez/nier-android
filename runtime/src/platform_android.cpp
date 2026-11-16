@@ -669,6 +669,10 @@ extern "C" JNIEXPORT void ANativeActivity_onCreate(ANativeActivity* activity, vo
 
 // All-files access (Android 11+): needed to read Internal storage/<game title>. Asks for it by opening the system page.
 static bool has_all_files_access(android_app* app) {
+    // Android 10 (API 29) has neither Environment.isExternalStorageManager nor the all-files access page: storage is
+    // legacy external storage with READ_EXTERNAL_STORAGE, which the launcher asks for. Without this, the lookup fails,
+    // reads as "no access", and android_main waits for a page that cannot open (black screen, the game never starts).
+    if (android_get_device_api_level() < 30) return true;
     if (!app || !app->activity || !app->activity->vm) return true;
     JNIEnv* env = nullptr;
     if (app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return true;
